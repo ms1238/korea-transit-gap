@@ -110,6 +110,8 @@ def fetch_dong_pop(key):
                 time.sleep(5 + attempt * 5)
         else:
             raise RuntimeError(f"{admm} {ym} lv{lv}: {err}")
+        if d["head"]["resultCode"] == "3":  # NODATA_ERROR: this code has no rows at this level
+            return [], 0
         if d["head"]["resultCode"] != "0":
             raise RuntimeError(f"{admm} {ym} lv{lv}: {d['head']}")
         items = (d.get("items") or {}).get("item") or []
@@ -139,7 +141,7 @@ def fetch_dong_pop(key):
             for g in every(s["admmCd"], ym, 2):
                 rows += every(g["admmCd"], ym, 3)
         dongs += rows
-    out = {r["admmCd"]: int(r["totNmprCnt"]) for r in dongs if r.get("dongNm")}
+    out = {r["admmCd"]: int(r["totNmprCnt"]) for r in dongs if r.get("dongNm")}  # a 시 and its 구 can both list a 행정동
     print(f"dong_pop: {ym}, {len(sido)} 시도, {len(out)} 행정동, population {sum(out.values()):,}", flush=True)
     if len(out) < 3000:
         raise RuntimeError(f"only {len(out)} 행정동")
@@ -235,7 +237,15 @@ def routes_areas(key, day):
         raise RuntimeError("BIGDATA (STCIS key) is not set")
     cands = []
     for sd in STCIS_SIDO:
-        d = requests.get(STCIS_AREAS, params={"apikey": stcis, "sdCd": sd}, headers={"User-Agent": "Mozilla/5.0"}, timeout=(15, 120)).json()
+        for attempt in range(5):  # STCIS often drops the connection; it answers on a retry
+            try:
+                d = requests.get(STCIS_AREAS, params={"apikey": stcis, "sdCd": sd}, headers={"User-Agent": "Mozilla/5.0"}, timeout=(15, 120)).json()
+                break
+            except Exception as e:  # noqa: BLE001
+                err = e
+                time.sleep(10 * (attempt + 1))
+        else:
+            raise RuntimeError(f"STCIS 지역코드 {sd}: {err}")
         cands += [(sd, r["sggCd"], r["sggNm"]) for r in d.get("result") or [] if r.get("sggCd")]
     areas = [[sd, sgg, name] for sd, sgg, name in dict.fromkeys(cands) if routes_call(key, day, sd, sgg, 1, 1)[0]]
     print(f"routes: {day}, {len(cands)} candidate 시군구 codes, {len(areas)} with data", flush=True)
