@@ -1,0 +1,19 @@
+name: Probe sources (temporary)
+
+on:
+  push:
+    paths: ["scripts/probe.py", ".github/workflows/probe.yml"]
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - env:
+          DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
+        run: python scripts/probe.py
