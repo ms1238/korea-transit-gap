@@ -21,7 +21,7 @@ const METRICS = [
     note: m => `도시철도·광역철도·일반철도·KTX 역에서 직선거리 ${m.rail_m / 1000}km가 넘는 면적의 비율입니다.` },
 ];
 
-let D, C, GEO, T, SGGPOP, meta, map, sortSgg = { k: 'v', asc: false }, sortDong = { k: 'v', asc: false }, pickSgg = null;
+let D, C, GEO, T, U, SGGPOP, meta, map, sortSgg = { k: 'v', asc: false }, sortDong = { k: 'v', asc: false }, pickSgg = null;
 const st = { metric: 'either', sido: '', urban: false };
 
 function agg(rows) {
@@ -40,10 +40,10 @@ const cls = v => v == null ? -1 : Math.min(4, Math.floor(v * 5));
 
 async function main() {
   const [stats, geo] = await Promise.all([fetch('data/stats.json').then(r => r.json()), fetch('data/dongs.geojson').then(r => r.json())]);
-  D = stats.rows; meta = stats.meta; T = stats.sgg_trips || {}; C = Object.fromEntries(stats.cols.map((c, i) => [c, i]));
+  D = stats.rows; meta = stats.meta; T = stats.sgg_trips || {}; U = stats.sgg_urban || {}; C = Object.fromEntries(stats.cols.map((c, i) => [c, i]));
   SGGPOP = {};
   for (const r of D) SGGPOP[r[C.sgg]] = (SGGPOP[r[C.sgg]] || 0) + (r[C.pop] || 0);
-  $('asof').textContent = `기준: 정류장 위치 ${meta.stops_collected} 수집 · 정차 노선수 ${meta.route_days.length ? meta.route_days.map(d => d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6)).join(', ') + ' 운행일' : '수집 중'}${meta.trips_months.length ? ' · 교통카드 통행 ' + meta.trips_months.map(m => m.slice(0, 4) + '년 ' + +m.slice(4) + '월').join(', ') : ''} · 인구 ${meta.pop_ym.slice(0, 4)}년 ${+meta.pop_ym.slice(4)}월 · 행정동 경계 ${meta.boundary.replace('ver', '')}`;
+  $('asof').textContent = `기준: 정류장 위치 ${meta.stops_collected} 수집 · 정차 노선수 ${meta.route_days.length ? meta.route_days.map(d => d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6)).join(', ') + ' 운행일' : '수집 중'}${meta.upis_year ? ' · 도시계획현황 ' + meta.upis_year + '년' : ''}${meta.trips_months.length ? ' · 교통카드 통행 ' + meta.trips_months.map(m => m.slice(0, 4) + '년 ' + +m.slice(4) + '월').join(', ') : ''} · 인구 ${meta.pop_ym.slice(0, 4)}년 ${+meta.pop_ym.slice(4)}월 · 행정동 경계 ${meta.boundary.replace('ver', '')}`;
   for (const m of METRICS) $('metric').add(new Option(m.name, m.id));
   const sidos = [...new Map(D.map(r => [r[C.sido], r[C.sidonm]])).entries()].sort((a, b) => a[0].localeCompare(b[0]));
   for (const [c, n] of sidos) $('sido').add(new Option(n, c));
@@ -106,7 +106,7 @@ function dongPopup(r) {
   const line = (k, v) => `<tr><td>${k}</td><td style="text-align:right">${v}</td></tr>`;
   return `<b>${esc(r[C.sidonm])} ${esc(r[C.sggnm])} ${esc(r[C.name])}</b> <small>(${r[C.type]})</small><table>` +
     line('주민등록인구', fmt(r[C.pop])) + line('면적', r[C.area_km2].toFixed(2) + '㎢') + line('버스 정류장', fmt(r[C.stops]) + '곳') +
-    METRICS.map(m => line(m.name, pct(m.v(x)))).join('') + (() => { const t = trips(r[C.sgg]); return t.trip == null ? '' :
+    METRICS.map(m => line(m.name, pct(m.v(x)))).join('') + (U[r[C.sgg]] ? line(`법정 도시지역 면적 (${U[r[C.sgg]].city ? esc(U[r[C.sgg]].city) + ' 전체' : '시군구'})`, pct(U[r[C.sgg]].area)) : '') + (() => { const t = trips(r[C.sgg]); return t.trip == null ? '' :
       line('주민 1인당 하루 승차 (시군구)', t.trip.toFixed(2)) + line('환승 통행 비중 (시군구)', pct(t.transfer)); })() + '</table>' +
     (r[C.osm_fill] ? '<small>이 시군구는 국토부 정류장 파일에 거의 없어 OpenStreetMap 정류장으로 보완했습니다.</small><br>' : '') +
     (r[C.route_ok] ? '' : '<small>이 시군구는 정차 노선수 자료가 없거나 정류장 연결이 부족합니다.</small>');
@@ -157,7 +157,7 @@ function sgRows(rows, m) {
   return [...by.values()].map(rs => {
     const x = agg(rs);
     return { sgg: rs[0][C.sgg], name: `${rs[0][C.sidonm]} ${rs[0][C.sggnm]}`, pop: x.pop, area: x.area, stops: x.stops,
-      v: m.v(x), either: METRICS[0].v(x), few: METRICS[3].v(x), route: rs[0][C.route_ok], osm: rs[0][C.osm_fill], ...trips(rs[0][C.sgg]) };
+      v: m.v(x), either: METRICS[0].v(x), few: METRICS[3].v(x), route: rs[0][C.route_ok], osm: rs[0][C.osm_fill], ...trips(rs[0][C.sgg]), uarea: U[rs[0][C.sgg]]?.area ?? null, upop: U[rs[0][C.sgg]]?.pop ?? null, ucity: U[rs[0][C.sgg]]?.city ?? null };
   });
 }
 
@@ -191,11 +191,13 @@ function renderSgg(rows, m) {
   const cols = [{ k: 'name', h: '시군구', l: 1, f: (v, r) => esc(v) + (r.osm ? ' <small title="OpenStreetMap 정류장으로 보완">*</small>' : '') },
     { k: 'v', h: m.name, f: pct }, { k: 'pop', h: '인구', f: fmt }, { k: 'area', h: '면적(㎢)', f: fmt }, { k: 'stops', h: '정류장', f: fmt },
     { k: 'either', h: '버스·철도 도보권 밖', f: pct }, { k: 'few', h: '노선 2개 이하 정류장', f: pct },
+    { k: 'uarea', h: '법정 도시지역 면적', f: (v, r) => pct(v) + (r.ucity && v != null ? ` <small title="${esc(r.ucity)} 전체 값">시</small>` : '') },
+    { k: 'upop', h: '도시지역 거주 인구', f: pct },
     { k: 'trip', h: '주민 1인당 하루 승차', f: v => v == null ? '-' : v.toFixed(2) }, { k: 'transfer', h: '환승 통행 비중', f: pct }, { k: 'elder', h: '경로 승차 비중', f: pct }];
   sggShown = table($('sgg-table'), cols, sgRows(rows, m), sortSgg, k => { sortSgg = { k, asc: sortSgg.k === k ? !sortSgg.asc : k === 'name' }; render(); },
     r => { pickSgg = r.sgg; renderDongs(D.filter(visible), m); zoomTo(D.filter(d => d[C.sgg] === r.sgg)); $('dong-title').scrollIntoView({ behavior: 'smooth' }); });
-  $('sgg-csv').onclick = () => csv(`시군구_${st.metric}.csv`, ['시군구코드', '시군구', m.name, '인구', '면적_km2', '정류장', '버스철도도보권밖', '노선2개이하정류장비율', '주민1인당하루승차', '환승통행비중', '경로승차비중', '노선수자료', 'OSM보완'],
-    sggShown.map(r => [r.sgg, r.name, r.v, r.pop, r.area.toFixed(3), r.stops, r.either, r.few, r.trip, r.transfer, r.elder, r.route, r.osm]));
+  $('sgg-csv').onclick = () => csv(`시군구_${st.metric}.csv`, ['시군구코드', '시군구', m.name, '인구', '면적_km2', '정류장', '버스철도도보권밖', '노선2개이하정류장비율', '법정도시지역면적비율', '도시지역거주인구비율', '주민1인당하루승차', '환승통행비중', '경로승차비중', '노선수자료', 'OSM보완'],
+    sggShown.map(r => [r.sgg, r.name, r.v, r.pop, r.area.toFixed(3), r.stops, r.either, r.few, r.uarea, r.upop, r.trip, r.transfer, r.elder, r.route, r.osm]));
 }
 
 function renderDongs(rows, m) {

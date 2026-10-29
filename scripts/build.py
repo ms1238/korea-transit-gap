@@ -10,6 +10,7 @@
    railway station, and within BUS_M of a stop served by GOOD_ROUTES or more routes. Distances are straight lines.
 4. 행정동 type from the name: 동 (urban 행정구역), 읍, 면.
 5. Monthly 교통카드 trips per 시군구 (교통수단별 이용량, 환승 이용량), as a daily average of 출발·승차 통행.
+6. 법정 도시지역 (국토계획법 용도지역) area and population shares per 시군구 from the 도시계획현황 statistics.
 
 Outputs (site/data): dongs.geojson (simplified boundaries), stats.json (one row per 행정동 + metadata), stops.json,
 stations.json, download/dongs.csv.
@@ -117,6 +118,40 @@ def load_trips(dongs):
                     cur[k][m] = cur[k].get(m, 0) + v
         out[g][kind] = cur
     return out, sorted(months), sorted(lost)
+
+
+UPIS_SIDO = {"서울특별시": "11", "부산광역시": "26", "대구광역시": "27", "인천광역시": "28", "광주광역시": "12", "전라남도": "12",
+             "대전광역시": "30", "울산광역시": "31", "세종특별자치시": "36", "경기도": "41", "강원특별자치도": "51", "충청북도": "43",
+             "충청남도": "44", "전북특별자치도": "52", "경상북도": "47", "경상남도": "48", "제주특별자치도": "50"}
+
+
+def load_upis(dongs):
+    """도시지역 per current 시군구 code from scripts/static/upis.csv (국토교통부 도시계획현황, see upis_csv.py):
+    {sgg: {area, pop, res, com, ind, green, city}}. The statistics list a 시 with 구 once, so its 구 share the 시's values
+    (city = that 시's name); 인천's pre-2026 중구·동구·서구 match no current 구."""
+    path = os.path.join(os.path.dirname(__file__), "static", "upis.csv")
+    if not os.path.exists(path):
+        return {}, None
+    with open(path, encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    by_sido = defaultdict(list)
+    for r in rows:
+        by_sido[UPIS_SIDO.get(r["시도"])].append(r)
+    out = {}
+    for sido, sgg, name in {(d["sido"], d["sgg"], d["sggnm"]) for d in dongs}:
+        cands = by_sido.get(sido, [])
+        r = next((c for c in cands if c["시군구"] == name), None) \
+            or next((c for c in cands if c["시군구"].endswith("시") and name.startswith(c["시군구"])), None) \
+            or (cands[0] if len(cands) == 1 else None)
+        if not r:
+            continue
+        total, urban = float(r["용도지역합계_m2"]), float(r["도시지역_m2"])
+        share = lambda k: round(float(r[k]) / urban, 4) if urban else None
+        out[sgg] = {"area": round(urban / total, 4) if total else None,
+                    "pop": round(float(r["도시지역인구"]) / float(r["전체인구"]), 4) if r["전체인구"] and float(r["전체인구"]) else None,
+                    "res": share("주거_m2"), "com": share("상업_m2"), "ind": share("공업_m2"), "green": share("녹지_m2"),
+                    "city": r["시군구"] if r["시군구"] != name else None}
+    return out, rows[0]["기준연도"] if rows else None
 
 
 def main():
@@ -250,11 +285,14 @@ def main():
                      "users": {u: round(x, 1) for u, x in v["modes"]["by_user"].items()},
                      "transfer": round(v["transfer"]["day"], 1) if "transfer" in v else None}
                  for g, v in trips.items() if "modes" in v}
-    meta = {"boundary": adm["ver"], "trips_months": tmonths, "pop_ym": pop_raw["ym"], "stops_collected": sm["collected"], "route_days": rdays,
+    upis, upis_year = load_upis(dongs)
+    nogo = sorted({d["sidonm"] + " " + d["sggnm"] for d in dongs if d["sgg"] not in upis})
+    print(f"도시지역 ({upis_year}): {len(upis)} of {len(set(sgg_of))} 시군구; without: {', '.join(nogo) or '-'}", flush=True)
+    meta = {"boundary": adm["ver"], "trips_months": tmonths, "upis_year": upis_year, "pop_ym": pop_raw["ym"], "stops_collected": sm["collected"], "route_days": rdays,
             "n_stops": int(len(s_lon)), "n_osm_added": int(add.sum()), "n_stations": len(stations),
             "bus_m": BUS_M, "rail_m": RAIL_M, "grid_m": GRID_M, "good_routes": GOOD_ROUTES}
     with open(os.path.join(OUT, "stats.json"), "w", encoding="utf-8") as f:
-        json.dump({"meta": meta, "cols": cols, "rows": rows, "sgg_trips": sgg_trips}, f, ensure_ascii=False, separators=(",", ":"))
+        json.dump({"meta": meta, "cols": cols, "rows": rows, "sgg_trips": sgg_trips, "sgg_urban": upis}, f, ensure_ascii=False, separators=(",", ":"))
     feats = []
     for i, g in enumerate(geoms):
         s = shapely.simplify(g, SIMPLIFY_DEG, preserve_topology=True)
