@@ -12,9 +12,16 @@ URL = "https://apis.data.go.kr/1613000/NumberofRoutesServingEachStop/getNumberof
 
 
 def page(day, ctpv, sgg, n=1, rows=1000):
-    r = requests.get(URL, timeout=120, params={"serviceKey": KEY, "pageNo": n, "numOfRows": rows, "dataType": "JSON",
-                                               "opr_ymd": day, "ctpv_cd": ctpv, "sgg_cd": sgg})
-    d = r.json()
+    for attempt in range(3):
+        try:
+            r = requests.get(URL, timeout=(15, 180), params={"serviceKey": KEY, "pageNo": n, "numOfRows": rows, "dataType": "JSON",
+                                                             "opr_ymd": day, "ctpv_cd": ctpv, "sgg_cd": sgg})
+            d = r.json()
+            break
+        except Exception as e:  # noqa: BLE001
+            print("   retry", attempt + 1, repr(e)[:100], flush=True)
+    else:
+        return "ERR", []
     if "Error" in d:
         return d["Error"]["message"], []
     b = d["Response"]["body"]
@@ -28,9 +35,7 @@ for day in ["20260901", "20260701", "20260501", "20260301", "20260101", "2025120
     print(" ", day, total, flush=True)
 
 print("\n== body keys")
-r = requests.get(URL, timeout=120, params={"serviceKey": KEY, "pageNo": 1, "numOfRows": 1, "dataType": "JSON",
-                                           "opr_ymd": "20250801", "ctpv_cd": "29", "sgg_cd": "29140"})
-print(" ", r.text[-300:])
+print(" ", page("20250801", "29", "29140", rows=1))
 
 f = requests.get("https://www.data.go.kr/cmm/cmm/fileDownload.do", params={"atchFileId": "FILE_000000003558143", "fileDetailSn": 1},
                  headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.data.go.kr/data/15067528/fileData.do"}, timeout=300)
@@ -43,7 +48,7 @@ for ctpv, sgg, city in [("29", "29140", "광주광역시"), ("51", "51150", "강
     while True:
         total, items = page("20250801", ctpv, sgg, n)
         rows += items
-        if not items or len(rows) >= int(total if str(total).isdigit() else 0):
+        if not items or len(rows) >= int(total if str(total).isdigit() else 0) or n >= 30:
             break
         n += 1
     uniq = {(r["sttn_id"], r["sttn_nm"]): r for r in rows}
