@@ -1,0 +1,86 @@
+name: Update data and deploy
+
+on:
+  schedule:
+    - cron: "41 19 * * *"   # 매일 04:41 KST
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["site/**", "scripts/**", ".github/workflows/**", "requirements.txt"]
+
+permissions:
+  contents: write  # temporary: the dev-raw branch
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    outputs:
+      site: ${{ steps.site.outputs.site }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      # A code push rebuilds from the data of the last run (and only fetches what is missing); the schedule and manual
+      # runs fetch again. 정차 노선수 is slow, so every run continues it within its time budget.
+      - name: Restore raw data from the last run
+        uses: actions/cache/restore@v4
+        with:
+          path: raw
+          key: raw-${{ github.run_id }}
+          restore-keys: raw-
+      - name: Fetch sources
+        env:
+          DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
+          BIGDATA: ${{ secrets.BIGDATA }}
+        run: python scripts/fetch.py ${{ github.event_name == 'push' && '--only-missing' || '' }}
+      - name: Save raw data for later runs
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: raw
+          key: raw-${{ github.run_id }}
+      # temporary, for development: a copy of raw/ readable from outside Actions
+      - name: Copy raw data to the dev-raw branch
+        run: |
+          tar czf /tmp/raw.tgz raw
+          split -b 40m /tmp/raw.tgz /tmp/raw.tgz.
+          git switch --orphan dev-raw-new
+          cp /tmp/raw.tgz.* .
+          git add raw.tgz.*
+          git -c user.name="github-actions" -c user.email="github-actions@users.noreply.github.com" commit -qm "raw data $(date -u +%F)"
+          git push -f origin dev-raw-new:dev-raw
+          git switch -f main
+      - name: Build dashboard data
+        if: hashFiles('scripts/build.py') != ''
+        run: python scripts/build.py
+      - id: site
+        run: echo "site=${{ hashFiles('site/index.html') != '' }}" >> "$GITHUB_OUTPUT"
+      - name: Version the page assets so browsers do not mix a new page with cached old scripts
+        if: steps.site.outputs.site == 'true'
+        run: sed -i -E "s/(app\.js|style\.css)\"/\1?v=${GITHUB_SHA::7}\"/g" site/index.html
+      - uses: actions/configure-pages@v5
+        if: steps.site.outputs.site == 'true'
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.site.outputs.site == 'true'
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.site == 'true'
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
