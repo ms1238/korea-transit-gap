@@ -14,7 +14,7 @@ for ns in ("15080989", "15085874"):
         for p in paths[-3:]:
             print("  table:", p, spec["paths"][p]["get"].get("summary", ""))
         d = requests.get("https://api.odcloud.kr/api" + paths[-1], params={"serviceKey": KEY, "page": 1, "perPage": 3, "returnType": "JSON"}, timeout=90)
-        print("  latest:", d.status_code, d.text[:1500])
+        print("  latest:", d.status_code, " ".join(d.text.split())[:1200])
     except Exception as e:  # noqa: BLE001
         print("  FAILED", repr(e)[:200])
 print("\n== sdsc2", flush=True)
@@ -23,6 +23,6 @@ for op, p in [("storeListInDong", {"divId": "adongCd", "key": "1111053000"}), ("
               ("storeListInRadius", {"radius": 500, "cx": 127.0276, "cy": 37.4979}), ("largeUpjongList", {}), ("baroApi", {"resId": "dong", "catId": "mega"})]:
     try:
         r = requests.get(f"{B}/{op}", params={"serviceKey": KEY, "pageNo": 1, "numOfRows": 3, "type": "json", **p}, timeout=(15, 120))
-        print(f"  {op} {p}: {r.status_code} {r.text[:1200]}", flush=True)
+        print(f"  {op} {p}: {r.status_code} {" ".join(r.text.split())[:900]}", flush=True)
     except Exception as e:  # noqa: BLE001
         print(f"  {op}: FAILED {repr(e)[:150]}")
