@@ -9,9 +9,9 @@ const NODATA = '#d6d5d0';
 // Every metric is a gap share (higher = worse) so the map always reads "darker = less served".
 // v(x) takes an aggregate {area, pop, stops, known, few, bus, rail, either, good, goodArea} and returns 0..1 or null.
 const METRICS = [
-  { id: 'either', name: '버스·철도 도보권 밖 면적 비율', v: x => x.area ? 1 - x.either / x.area : null,
+  { id: 'either', name: '버스·철도 도보권 밖 면적 비율', v: x => x.busArea ? 1 - x.either / x.busArea : null,
     note: m => `버스 정류장 ${m.bus_m}m, 철도역 ${m.rail_m / 1000}km(직선거리) 어디에도 들지 않는 면적의 비율입니다. 면적 기준이라 산지가 넓은 읍·면은 실제 생활권보다 나쁘게 보일 수 있습니다.` },
-  { id: 'bus', name: `버스 정류장 도보권 밖 면적 비율`, v: x => x.area ? 1 - x.bus / x.area : null,
+  { id: 'bus', name: `버스 정류장 도보권 밖 면적 비율`, v: x => x.busArea ? 1 - x.bus / x.busArea : null,
     note: m => `가장 가까운 버스 정류장까지 직선거리 ${m.bus_m}m가 넘는 면적의 비율입니다.` },
   { id: 'good', name: '노선이 넉넉한 정류장 도보권 밖 비율', v: x => x.goodArea ? 1 - x.good / x.goodArea : null,
     note: m => `정차 노선이 ${m.good_routes}개 이상인 정류장에서 ${m.bus_m}m가 넘는 면적의 비율입니다. 정류장은 있어도 노선이 1~${m.good_routes - 1}개뿐인 곳은 '밖'으로 셉니다. 정차 노선수 자료가 없는 시군구는 회색입니다.` },
@@ -25,11 +25,12 @@ let D, C, GEO, T, U, SGGPOP, meta, map, sortSgg = { k: 'v', asc: false }, sortDo
 const st = { metric: 'either', sido: '', urban: false };
 
 function agg(rows) {
-  const x = { area: 0, pop: 0, stops: 0, known: 0, few: 0, bus: 0, rail: 0, either: 0, good: 0, goodArea: 0, n: rows.length };
+  const x = { area: 0, pop: 0, stops: 0, known: 0, few: 0, bus: 0, rail: 0, either: 0, busArea: 0, good: 0, goodArea: 0, n: rows.length };
   for (const r of rows) {
     const a = r[C.area_km2];
     x.area += a; x.pop += r[C.pop] || 0; x.stops += r[C.stops]; x.known += r[C.stops_known]; x.few += r[C.stops_few];
-    x.bus += a * r[C.bus500]; x.rail += a * r[C.rail1k]; x.either += a * r[C.either];
+    x.rail += a * r[C.rail1k];
+    if (r[C.bus500] != null) { x.bus += a * r[C.bus500]; x.either += a * r[C.either]; x.busArea += a; }
     if (r[C.good500] != null) { x.good += a * r[C.good500]; x.goodArea += a; }
   }
   return x;
@@ -108,6 +109,7 @@ function dongPopup(r) {
     line('주민등록인구', fmt(r[C.pop])) + line('면적', r[C.area_km2].toFixed(2) + '㎢') + line('버스 정류장', fmt(r[C.stops]) + '곳') +
     METRICS.map(m => line(m.name, pct(m.v(x)))).join('') + (U[r[C.sgg]] ? line(`법정 도시지역 면적 (${U[r[C.sgg]].city ? esc(U[r[C.sgg]].city) + ' 전체' : '시군구'})`, pct(U[r[C.sgg]].area)) : '') + (() => { const t = trips(r[C.sgg]); return t.trip == null ? '' :
       line('주민 1인당 하루 승차 (시군구)', t.trip.toFixed(2)) + line('환승 통행 비중 (시군구)', pct(t.transfer)); })() + '</table>' +
+    (r[C.stop_gap] ? '<small>이 시군구는 국토부 파일과 OpenStreetMap 모두 정류장이 크게 부족해 버스 지표를 비워 두었습니다.</small><br>' : '') +
     (r[C.osm_fill] ? '<small>이 시군구는 국토부 정류장 파일에 거의 없어 OpenStreetMap 정류장으로 보완했습니다.</small><br>' : '') +
     (r[C.route_ok] ? '' : '<small>이 시군구는 정차 노선수 자료가 없거나 정류장 연결이 부족합니다.</small>');
 }
@@ -157,7 +159,7 @@ function sgRows(rows, m) {
   return [...by.values()].map(rs => {
     const x = agg(rs);
     return { sgg: rs[0][C.sgg], name: `${rs[0][C.sidonm]} ${rs[0][C.sggnm]}`, pop: x.pop, area: x.area, stops: x.stops,
-      v: m.v(x), either: METRICS[0].v(x), few: METRICS[3].v(x), route: rs[0][C.route_ok], osm: rs[0][C.osm_fill], ...trips(rs[0][C.sgg]), uarea: U[rs[0][C.sgg]]?.area ?? null, upop: U[rs[0][C.sgg]]?.pop ?? null, ucity: U[rs[0][C.sgg]]?.city ?? null };
+      v: m.v(x), gap: rs[0][C.stop_gap], either: METRICS[0].v(x), few: METRICS[3].v(x), route: rs[0][C.route_ok], osm: rs[0][C.osm_fill], ...trips(rs[0][C.sgg]), uarea: U[rs[0][C.sgg]]?.area ?? null, upop: U[rs[0][C.sgg]]?.pop ?? null, ucity: U[rs[0][C.sgg]]?.city ?? null };
   });
 }
 
@@ -188,7 +190,7 @@ function table(el, cols, data, sort, onSort, onRow) {
 let sggShown = [], dongShown = [];
 function renderSgg(rows, m) {
   $('sgg-title').textContent = `시군구 순위 · ${m.name}`;
-  const cols = [{ k: 'name', h: '시군구', l: 1, f: (v, r) => esc(v) + (r.osm ? ' <small title="OpenStreetMap 정류장으로 보완">*</small>' : '') },
+  const cols = [{ k: 'name', h: '시군구', l: 1, f: (v, r) => esc(v) + (r.osm ? ' <small title="OpenStreetMap 정류장으로 보완">*</small>' : '') + (r.gap ? ' <small title="정류장 위치 자료 부족: 버스 지표 없음">자료 부족</small>' : '') },
     { k: 'v', h: m.name, f: pct }, { k: 'pop', h: '인구', f: fmt }, { k: 'area', h: '면적(㎢)', f: fmt }, { k: 'stops', h: '정류장', f: fmt },
     { k: 'either', h: '버스·철도 도보권 밖', f: pct }, { k: 'few', h: '노선 2개 이하 정류장', f: pct },
     { k: 'uarea', h: '법정 도시지역 면적', f: (v, r) => pct(v) + (r.ucity && v != null ? ` <small title="${esc(r.ucity)} 전체 값">시</small>` : '') },

@@ -5,7 +5,8 @@
 2. Route counts (정차 노선수) are attached to stops by name within the same 시군구 (the API has names and 법정동 codes
    but no coordinates): by 시군구 code, else by 시군구 name (the API keeps pre-2026 codes, so its 시도 are mapped onto
    the current ones, SIDO_GROUP), else (인천's new 구) by a name unique within the 시도. A 시군구 whose stops match less than
-   ROUTE_MATCH_MIN gets no route figures.
+   ROUTE_MATCH_MIN gets no route figures. A non-dense 시군구 with fewer than GAP_STOPS_PER_1000 stops per 1,000 people
+   lacks stop data in both sources (e.g. 화천, 속초) and gets no bus figures instead of a false gap.
 3. Coverage per 행정동: the share of its area (cells of a GRID_M grid) within BUS_M of a bus stop, within RAIL_M of a
    railway station, and within BUS_M of a stop served by GOOD_ROUTES or more routes. Distances are straight lines.
 4. 행정동 type from the name: 동 (urban 행정구역), 읍, 면.
@@ -34,6 +35,7 @@ BUS_M, RAIL_M, GRID_M = 500, 1000, 100
 GOOD_ROUTES = 3  # a stop with fewer routes counts as sparsely served
 OSM_FILL, DEDUP_M = 0.5, 50
 ROUTE_MATCH_MIN = 0.6
+GAP_STOPS_PER_1000, GAP_DENSITY = 2.0, 3000  # a non-dense 시군구 (people per ㎢) with fewer stops per 1,000 people lacks stop data
 SIDO_GROUP = {"29": "12", "46": "12", "42": "51", "45": "52"}  # 광주·전남 → 전남광주통합특별시, old 강원·전북 codes
 SIMPLIFY_DEG = 0.0004  # ~40 m
 
@@ -254,6 +256,16 @@ def main():
         w = good_t.query(pts, distance_upper_bound=BUS_M)[0] <= BUS_M if good_t else np.zeros(len(pts), bool)
         cov[i] = [b.mean(), r.mean(), (b | r).mean(), w.mean()]
 
+    # 시군구 whose stops are missing from both sources: no bus figures rather than a false gap
+    g_stop, g_pop, g_area = defaultdict(int), defaultdict(float), defaultdict(float)
+    for j in range(len(s_lon)):
+        g_stop[sgg_of[s_dong[j]]] += 1
+    for i, d in enumerate(dongs):
+        g_pop[d["sgg"]] += pop[i] or 0
+        g_area[d["sgg"]] += area[i] / 1e6
+    stop_gap = {g for g in g_pop if g_pop[g] and g_stop[g] / g_pop[g] * 1000 < GAP_STOPS_PER_1000 and g_pop[g] / g_area[g] < GAP_DENSITY}
+    print("stop data gaps (no bus figures): " + ", ".join(sorted(f"{dongs[np.where(sgg_of == g)[0][0]]['sggnm']}({g_stop[g]})" for g in stop_gap)), flush=True)
+
     # per 행정동
     n_stop, n_known, n_few, sum_rte = (np.zeros(len(dongs)) for _ in range(4))
     for j in range(len(s_lon)):
@@ -264,14 +276,14 @@ def main():
             n_few[i] += s_rte_ok[j] < GOOD_ROUTES
             sum_rte[i] += s_rte_ok[j]
     cols = ["code", "name", "sido", "sidonm", "sgg", "sggnm", "type", "pop", "area_km2", "stops", "stops_known", "stops_few",
-            "routes_sum", "bus500", "rail1k", "either", "good500", "route_ok", "osm_fill"]
+            "routes_sum", "bus500", "rail1k", "either", "good500", "route_ok", "osm_fill", "stop_gap"]
     rows = []
     for i, d in enumerate(dongs):
-        ok = d["sgg"] in route_ok
+        ok, gap = d["sgg"] in route_ok, d["sgg"] in stop_gap
         rows.append([d["code"], d["name"], d["sido"], d["sidonm"], d["sgg"], d["sggnm"], dong_type(d["name"]), pop[i],
                      round(area[i] / 1e6, 3), int(n_stop[i]), int(n_known[i]), int(n_few[i]), int(sum_rte[i]),
-                     round(cov[i, 0], 4), round(cov[i, 1], 4), round(cov[i, 2], 4), round(cov[i, 3], 4) if ok else None,
-                     int(ok), int(d["sgg"] in fill)])
+                     None if gap else round(cov[i, 0], 4), round(cov[i, 1], 4), None if gap else round(cov[i, 2], 4),
+                     round(cov[i, 3], 4) if ok and not gap else None, int(ok), int(d["sgg"] in fill), int(gap)])
     a = area / 1e6
     print(f"coverage (area-weighted): bus {np.sum(cov[:, 0] * a) / a.sum():.1%}, rail {np.sum(cov[:, 1] * a) / a.sum():.1%}, "
           f"either {np.sum(cov[:, 2] * a) / a.sum():.1%}; 동 only bus "
@@ -309,7 +321,7 @@ def main():
         w.writerow(["행정동코드", "행정동", "시도코드", "시도", "시군구코드", "시군구", "구분", "주민등록인구", "면적_km2", "정류장수",
                     "노선수확인정류장", f"노선{GOOD_ROUTES - 1}개이하정류장", "정차노선합계", f"버스{BUS_M}m권역비율",
                     f"철도{RAIL_M}m권역비율", "버스또는철도권역비율", f"노선{GOOD_ROUTES}개이상정류장{BUS_M}m권역비율",
-                    "노선수자료있음", "OSM정류장보완"])
+                    "노선수자료있음", "OSM정류장보완", "정류장위치자료부족"])
         w.writerows(rows)
     for name in ("stats.json", "dongs.geojson", "stops.json", "stations.json"):
         print(f"  {name}: {os.path.getsize(os.path.join(OUT, name)) / 1e6:.1f} MB", flush=True)
