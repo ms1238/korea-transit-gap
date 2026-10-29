@@ -55,6 +55,7 @@ area["ISO3166-1"="KR"][admin_level=2]->.k;
 nwr["railway"~"^(station|halt)$"](area.k);
 out center tags;"""
 SOURCES = ["admin_dong", "dong_pop", "stops_molit", "stops_osm", "stations_osm", "routes", "trips"]
+FRESH_DAYS = {"admin_dong": 7, "dong_pop": 7, "stops_molit": 30, "stops_osm": 7, "stations_osm": 7}  # refetch after this many days
 
 
 def save_json(name, data):
@@ -373,12 +374,14 @@ def main():
     os.makedirs(RAW, exist_ok=True)
     only_missing = "--only-missing" in sys.argv
     names = [a for a in sys.argv[1:] if not a.startswith("--")] or SOURCES
-    DEADLINE[0] = time.time() + API_BUDGET_MIN * 60
     failed = []
     for name in names:
-        have = os.path.exists(os.path.join(RAW, name if name in ("routes", "trips") else name + ".json"))
-        if only_missing and have and name not in ("routes", "trips"):
+        path = os.path.join(RAW, name if name in ("routes", "trips") else name + ".json")
+        have = os.path.exists(path)
+        if have and name in FRESH_DAYS and (only_missing or time.time() - os.path.getmtime(path) < FRESH_DAYS[name] * 86400):
             continue
+        if name == "routes":  # the slow APIs share one budget, counted from here
+            DEADLINE[0] = time.time() + API_BUDGET_MIN * 60
         try:
             globals()[f"fetch_{name}"](key)
         except Exception as e:  # noqa: BLE001
