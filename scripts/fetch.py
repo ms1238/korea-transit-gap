@@ -6,11 +6,13 @@
 - stops_osm:    bus stops from OpenStreetMap (fills 시군구 missing from the 국토부 file)
 - stations_osm: railway stations and halts from OpenStreetMap (도시철도, 광역·일반철도, KTX)
 - routes:       국토교통부 정류장별 정차 노선수 (교통카드 data), one 시군구 per file under raw/routes/
+- lh:           한국토지주택공사 전국 LH아파트 단지정보 (odcloud)
+- stores:       소상공인시장진흥공단 상가(상권)정보 points per 시군구 under raw/stores/
 - trips:        국토교통부 교통수단별 이용량 and 환승 이용량 (교통카드 data, monthly), summed per 시군구 under raw/trips/
                 These APIs are slow, so each run fetches what fits in API_BUDGET_MIN and later runs continue.
 
 `--only-missing` fetches only sources that have no file in raw/ yet (code pushes reuse the cached data);
-routes and trips always continue within their budget.
+routes, stores and trips always continue within their budget.
 
 Keys come from the environment (GitHub Actions secrets) and must never be written into the repository:
 DATA_GO_KR_KEY (공공데이터포털).
@@ -35,6 +37,7 @@ STOPS_PAGE = "https://www.data.go.kr/data/15067528/fileData.do"
 ROUTES = "https://apis.data.go.kr/1613000/NumberofRoutesServingEachStop/getNumberofRoutesServingEachStop"
 API_BUDGET_MIN = 55  # 정차 노선수 and trip volumes together, per run; the job limit is 90 minutes
 DEADLINE = [0.0]
+STORES_MAX_DAYS = 90  # 상가 data is quarterly
 TRIPS = {  # kind -> (monthly operation, mode field or None)
     "modes": ("https://apis.data.go.kr/1613000/TransportationModeTripVolume/getMonthlyTransportationModeTripVolume", "trfc_mns_nm"),
     "transfer": ("https://apis.data.go.kr/1613000/TransferTripVolume/getMonthlyTransferTripVolume", None),
@@ -54,8 +57,11 @@ STATIONS_QUERY = """[out:json][timeout:240];
 area["ISO3166-1"="KR"][admin_level=2]->.k;
 nwr["railway"~"^(station|halt)$"](area.k);
 out center tags;"""
-SOURCES = ["admin_dong", "dong_pop", "stops_molit", "stops_osm", "stations_osm", "routes", "trips"]
-FRESH_DAYS = {"admin_dong": 7, "dong_pop": 7, "stops_molit": 30, "stops_osm": 7, "stations_osm": 7}  # refetch after this many days
+STORES = "https://apis.data.go.kr/B553077/api/open/sdsc2/storeListInDong"  # 소상공인시장진흥공단 상가(상권)정보
+LH_SPEC = "https://infuser.odcloud.kr/oas/docs?namespace=15080989/v1"  # 한국토지주택공사 전국 LH아파트 단지정보
+SOURCES = ["admin_dong", "dong_pop", "stops_molit", "stops_osm", "stations_osm", "lh", "routes", "stores", "trips"]
+OPTIONAL = {"lh", "routes", "stores", "trips"}  # the page is built without them (their figures stay empty)
+FRESH_DAYS = {"admin_dong": 7, "dong_pop": 7, "stops_molit": 30, "stops_osm": 7, "stations_osm": 7, "lh": 30}  # refetch after this many days
 
 
 def save_json(name, data):
@@ -316,6 +322,67 @@ def fetch_routes(key):
     print(f"routes: {day}, {len(areas)} 시군구, fetched {done} this run, {left} left", flush=True)
 
 
+def fetch_lh(key):
+    """LH 아파트 단지 (the latest odcloud table): [[단지명, 세대수, 임대유형, 주택유형, 주소], …]; 주소 is often empty."""
+    spec = requests.get(LH_SPEC, timeout=60).json()
+    path = max(spec["paths"], key=lambda q: spec["paths"][q]["get"].get("summary", "")[-8:])
+    rows, page = [], 1
+    while True:
+        d = requests.get("https://api.odcloud.kr/api" + path, params={"serviceKey": key, "page": page, "perPage": 1000, "returnType": "JSON"}, timeout=120).json()
+        if "data" not in d:
+            raise RuntimeError(str(d)[:200])
+        rows += [[r.get("단지명") or "", r.get("세대수") or 0, r.get("임대유형") or "", r.get("주택유형") or "", r.get("주소") or ""] for r in d["data"]]
+        if page * 1000 >= d.get("totalCount", 0):
+            break
+        page += 1
+    title = spec["paths"][path]["get"].get("summary", "")
+    print(f"lh: {title}: {len(rows)} 단지, {sum(1 for r in rows if r[4])} with an address", flush=True)
+    save_json("lh.json", {"table": title, "rows": rows})
+
+
+def fetch_stores(key):
+    """상가업소 per current 시군구 (sdsc2 storeListInDong by signguCd): raw/stores/<sgg>.json = {ym, stores: [[lon, lat,
+    업종대분류코드], …]}. Continues within the shared budget; a 시군구 older than STORES_MAX_DAYS is fetched again."""
+    sggs = sorted({d["sgg"] for d in json.load(open(os.path.join(RAW, "admin_dong.json"), encoding="utf-8"))["dongs"]})
+    folder = os.path.join(RAW, "stores")
+    os.makedirs(folder, exist_ok=True)
+    old = lambda s: not os.path.exists(os.path.join(folder, f"{s}.json")) or time.time() - os.path.getmtime(os.path.join(folder, f"{s}.json")) > STORES_MAX_DAYS * 86400
+    todo, done = [s for s in sggs if old(s)], 0
+    for sgg in todo:
+        if time.time() > DEADLINE[0]:
+            break
+        out, ym, page = [], "", 1
+        try:
+            while True:
+                for attempt in range(3):
+                    try:
+                        d = requests.get(STORES, params={"serviceKey": key, "divId": "signguCd", "key": sgg, "numOfRows": 1000, "pageNo": page, "type": "json"},
+                                         timeout=(15, 120)).json()
+                        break
+                    except Exception as e:  # noqa: BLE001
+                        err = e
+                        time.sleep(10)
+                else:
+                    raise RuntimeError(f"stores {sgg} page {page}: {err}")
+                h = d.get("header", {})
+                if h.get("resultCode") == "03":  # NODATA
+                    break
+                if h.get("resultCode") != "00":
+                    raise RuntimeError(f"stores {sgg}: {h}")
+                ym = h.get("stdrYm", ym)
+                items = (d.get("body") or {}).get("items") or []
+                out += [[round(float(i["lon"]), 6), round(float(i["lat"]), 6), i.get("indsLclsCd", "")] for i in items if i.get("lon") and i.get("lat")]
+                if len(items) < 1000:
+                    break
+                page += 1
+        except RuntimeError as e:
+            print(f"  {e}", flush=True)
+            continue
+        save_json(os.path.join("stores", f"{sgg}.json"), {"ym": ym, "stores": out})
+        done += 1
+    print(f"stores: {len(sggs)} 시군구, fetched {done} this run, {len(todo) - done} left", flush=True)
+
+
 def trips_month(key):
     """The latest month the trip-volume API has data for."""
     first = date.today().replace(day=1)
@@ -376,7 +443,7 @@ def main():
     names = [a for a in sys.argv[1:] if not a.startswith("--")] or SOURCES
     failed = []
     for name in names:
-        path = os.path.join(RAW, name if name in ("routes", "trips") else name + ".json")
+        path = os.path.join(RAW, name if name in ("routes", "trips", "stores") else name + ".json")
         have = os.path.exists(path)
         if have and name in FRESH_DAYS and (only_missing or time.time() - os.path.getmtime(path) < FRESH_DAYS[name] * 86400):
             continue
@@ -386,7 +453,7 @@ def main():
             globals()[f"fetch_{name}"](key)
         except Exception as e:  # noqa: BLE001
             print(f"{name}: FAILED {e}" + (" (keeping the last copy)" if have else ""), flush=True)
-            if not have:
+            if not have and name not in OPTIONAL:
                 failed.append(name)
     if failed:
         sys.exit(f"never fetched: {', '.join(failed)}")

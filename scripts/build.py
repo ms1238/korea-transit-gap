@@ -7,14 +7,18 @@
    the current ones, SIDO_GROUP), else (인천's new 구) by a name unique within the 시도. A 시군구 whose stops match less than
    ROUTE_MATCH_MIN gets no route figures. A non-dense 시군구 with fewer than GAP_STOPS_PER_1000 stops per 1,000 people
    lacks stop data in both sources (e.g. 화천, 속초) and gets no bus figures instead of a false gap.
-3. Coverage per 행정동: the share of its area (cells of a GRID_M grid) within BUS_M of a bus stop, within RAIL_M of a
-   railway station, and within BUS_M of a stop served by GOOD_ROUTES or more routes. Distances are straight lines.
+3. Coverage per 행정동 on a Web Mercator pixel grid (~170 m): the share of its area within BUS_M of a bus stop, within
+   RAIL_M of a railway station, and within BUS_M of a stop served by GOOD_ROUTES or more routes; and the PM classes of
+   GRID_CLASSES (도보권, PM 5분권, PM 10분권, beyond) around PM anchors (stations, well-served stops, and every stop where
+   route counts are unknown), drawn as pmgrid.png. Distances are straight lines.
+3b. PM 잠재 지수 per 행정동: mean percentile rank of the PM-reachable share, population density and 상가 density.
+3c. 산업단지 (한국산업단지공단) and LH 임대 세대 per 시군구.
 4. 행정동 type from the name: 동 (urban 행정구역), 읍, 면.
 5. Monthly 교통카드 trips per 시군구 (교통수단별 이용량, 환승 이용량), as a daily average of 출발·승차 통행.
 6. 법정 도시지역 (국토계획법 용도지역) area and population shares per 시군구 from the 도시계획현황 statistics.
 
 Outputs (site/data): dongs.geojson (simplified boundaries), stats.json (one row per 행정동 + metadata), stops.json,
-stations.json, download/dongs.csv.
+stations.json, pmgrid.png, download/dongs.csv.
 """
 import calendar
 import csv
@@ -27,17 +31,25 @@ from collections import defaultdict
 
 import numpy as np
 import shapely
+from PIL import Image
 from scipy.spatial import cKDTree
 
 RAW = os.path.join(os.path.dirname(__file__), "..", "raw")
 OUT = os.path.join(os.path.dirname(__file__), "..", "site", "data")
-BUS_M, RAIL_M, GRID_M = 500, 1000, 100
+BUS_M, RAIL_M = 500, 1000
 GOOD_ROUTES = 3  # a stop with fewer routes counts as sparsely served
 OSM_FILL, DEDUP_M = 0.5, 50
 ROUTE_MATCH_MIN = 0.6
 GAP_STOPS_PER_1000, GAP_DENSITY = 2.0, 3000  # a non-dense 시군구 (people per ㎢) with fewer stops per 1,000 people lacks stop data
 SIDO_GROUP = {"29": "12", "46": "12", "42": "51", "45": "52"}  # 광주·전남 → 전남광주통합특별시, old 강원·전북 codes
 SIMPLIFY_DEG = 0.0004  # ~40 m
+# PM first/last mile (Geurs & van Wee's contour measure): reach within 5 and 10 minutes of riding, as straight lines
+PM_SPEED_KMH, PM_DETOUR = 15, 1.3  # assumed average riding speed and road distance / straight distance
+PM5_M, PM10_M = (round(PM_SPEED_KMH * 1000 / 60 * m / PM_DETOUR) for m in (5, 10))
+# Web Mercator pixel grid over South Korea (under 4096 px a side, the usual WebGL texture limit); ~170 m at 36°N
+LON0, LON1, LAT0, LAT1, PIX_M, R_EARTH = 124.5, 132.0, 33.0, 38.7, 210, 6378137.0
+GRID_CLASSES = {1: ("도보권", None), 2: ("PM 5분권", (235, 104, 52, 210)), 3: ("PM 10분권", (246, 179, 143, 190)),
+                4: ("PM으로도 먼 곳", (82, 81, 78, 130)), 5: ("정류장 자료 부족", (214, 213, 208, 170))}  # 0: outside Korea
 
 
 def load(name):
@@ -125,6 +137,107 @@ def load_trips(dongs):
 UPIS_SIDO = {"서울특별시": "11", "부산광역시": "26", "대구광역시": "27", "인천광역시": "28", "광주광역시": "12", "전라남도": "12",
              "대전광역시": "30", "울산광역시": "31", "세종특별자치시": "36", "경기도": "41", "강원특별자치도": "51", "충청북도": "43",
              "충청남도": "44", "전북특별자치도": "52", "경상북도": "47", "경상남도": "48", "제주특별자치도": "50"}
+
+
+def merc_x(lon):
+    return R_EARTH * np.radians(lon)
+
+
+def merc_y(lat):
+    return R_EARTH * np.log(np.tan(np.pi / 4 + np.radians(lat) / 2))
+
+
+def inv_merc_y(y):
+    return np.degrees(2 * np.arctan(np.exp(np.asarray(y) / R_EARTH)) - np.pi / 2)
+
+
+def write_grid(img, w, h):
+    """The PM grid as a palette PNG (pmgrid.png); 도보권 and outside are transparent."""
+    pal, alpha = [], []
+    for k in range(6):
+        rgba = GRID_CLASSES.get(k, (None, None))[1] or (0, 0, 0, 0)
+        pal += rgba[:3]
+        alpha.append(rgba[3])
+    im = Image.fromarray(img, "P")
+    im.putpalette(pal + [0] * (768 - len(pal)))
+    im.save(os.path.join(OUT, "pmgrid.png"), transparency=bytes(alpha), optimize=True)
+    print(f"pm grid: {w} x {h} px, " + ", ".join(f"{GRID_CLASSES[k][0]} {np.sum(img == k):,}" for k in GRID_CLASSES), flush=True)
+
+
+def load_stores(tree, dongs):
+    """상가업소 count per 행정동 from raw/stores/<sgg>.json, the 시군구 that have a file, and the newest base month."""
+    n = np.zeros(len(dongs))
+    ok, yms = set(), set()
+    for path in glob.glob(os.path.join(RAW, "stores", "*.json")):
+        d = load(os.path.relpath(path, RAW))
+        ok.add(os.path.basename(path)[:-5])
+        yms.add(d.get("ym") or "")
+        if d["stores"]:
+            xy = np.array([s[:2] for s in d["stores"]])
+            di = assign(tree, xy[:, 0], xy[:, 1])
+            np.add.at(n, di[di >= 0], 1)
+    return n, ok, max(yms - {""}, default=None)
+
+
+IND_SIDO = {"서울": "11", "부산": "26", "대구": "27", "인천": "28", "광주": "12", "전남": "12", "대전": "30", "울산": "31", "세종": "36",
+            "경기": "41", "강원": "51", "충북": "43", "충남": "44", "전북": "52", "경북": "47", "경남": "48", "제주": "50"}
+
+
+def load_industrial(dongs):
+    """산업단지 per current 시군구 from scripts/static/industrial.csv (한국산업단지공단, see industrial_csv.py):
+    {sgg: {n, firms, area (천㎡), old, date, city}}. Complexes listed for a whole 시 that has 구 count for every 구 of
+    that 시 (city = the 시); 인천's pre-2026 중구·서구 match no current 구."""
+    path = os.path.join(os.path.dirname(__file__), "static", "industrial.csv")
+    if not os.path.exists(path):
+        return {}, []
+    with open(path, encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    sggs = {(d["sido"], d["sgg"], norm(d["sggnm"])) for d in dongs}
+    out, lost = {}, set()
+    for r in rows:
+        sido, name = IND_SIDO.get(r["시도"]), norm(r["시군구"])
+        exact = [g for s, g, n in sggs if s == sido and (n == name or (sido == "36" and r["시도"] == "세종"))]
+        city = [g for s, g, n in sggs if s == sido and name.endswith("시") and n.startswith(name)] if not exact else []
+        if not exact and not city:
+            lost.add(f"{r['시도']} {r['시군구']}")
+            continue
+        for g in exact or city:
+            v = out.setdefault(g, {"n": 0, "firms": 0, "area": 0.0, "old": 0, "date": r["기준일"], "city": None})
+            v["n"] += 1
+            v["firms"] += int(float(r["가동업체"] or 0))
+            v["area"] += float(r["관리면적_천m2"] or 0)
+            v["old"] += int(r["노후"])
+            if city:
+                v["city"] = r["시군구"]
+    return out, sorted(lost)
+
+
+def lh_table():
+    return load("lh.json")["table"] if os.path.exists(os.path.join(RAW, "lh.json")) else None
+
+
+def load_lh(dongs):
+    """LH 임대 세대 per current 시군구, from the 단지 whose 주소 names a 시군구: ({sgg: {units, complexes}}, 단지, with address)."""
+    if not os.path.exists(os.path.join(RAW, "lh.json")):
+        return {}, 0, 0
+    rows = load("lh.json")["rows"]
+    names = defaultdict(list)
+    for d in dongs:
+        names[norm(d["sggnm"])].append((d["sidonm"], d["sgg"]))
+    out, addr = {}, 0
+    for name, units, rent, _kind, address in rows:
+        parts = (address or "").split()
+        if len(parts) < 2:
+            continue
+        addr += 1
+        cand = [norm(parts[1] + parts[2])] if len(parts) > 2 and parts[2].endswith("구") and parts[1].endswith("시") else []
+        cand.append(norm(parts[1]))
+        g = next((sg for c in cand for sd, sg in names.get(c, []) if sd[:2] == parts[0][:2] or len(names[c]) == 1), None)
+        if g and "임대" in (rent or "") and units:
+            v = out.setdefault(g, {"units": 0, "complexes": 0})
+            v["units"] += int(units)
+            v["complexes"] += 1
+    return out, len(rows), addr
 
 
 def load_upis(dongs):
@@ -235,27 +348,6 @@ def main():
         stations.append([round(lo, 5), round(la, 5), s[0]])
     print(f"stations: {len(st)} from OSM, {len(stations)} inside Korea after removing duplicates", flush=True)
 
-    # 3. coverage on a grid
-    bus_t = cKDTree(proj(s_lon, s_lat))
-    good = s_rte_ok >= GOOD_ROUTES
-    good_t = cKDTree(proj(s_lon[good], s_lat[good])) if good.any() else None
-    rail_t = cKDTree(proj([s[0] for s in stations], [s[1] for s in stations]))
-    cov = np.zeros((len(dongs), 4))  # bus, rail, either, well-served bus
-    for i, g in enumerate(pgeoms):
-        x0, y0, x1, y1 = g.bounds
-        xs = np.arange(math.floor(x0 / GRID_M) * GRID_M + GRID_M / 2, x1, GRID_M)
-        ys = np.arange(math.floor(y0 / GRID_M) * GRID_M + GRID_M / 2, y1, GRID_M)
-        X, Y = np.meshgrid(xs, ys)
-        inside = shapely.contains_xy(g, X.ravel(), Y.ravel())
-        pts = np.column_stack([X.ravel()[inside], Y.ravel()[inside]])
-        if not len(pts):  # smaller than a cell
-            c = g.representative_point()
-            pts = np.array([[c.x, c.y]])
-        b = bus_t.query(pts, distance_upper_bound=BUS_M)[0] <= BUS_M
-        r = rail_t.query(pts, distance_upper_bound=RAIL_M)[0] <= RAIL_M
-        w = good_t.query(pts, distance_upper_bound=BUS_M)[0] <= BUS_M if good_t else np.zeros(len(pts), bool)
-        cov[i] = [b.mean(), r.mean(), (b | r).mean(), w.mean()]
-
     # 시군구 whose stops are missing from both sources: no bus figures rather than a false gap
     g_stop, g_pop, g_area = defaultdict(int), defaultdict(float), defaultdict(float)
     for j in range(len(s_lon)):
@@ -265,6 +357,63 @@ def main():
         g_area[d["sgg"]] += area[i] / 1e6
     stop_gap = {g for g in g_pop if g_pop[g] and g_stop[g] / g_pop[g] * 1000 < GAP_STOPS_PER_1000 and g_pop[g] / g_area[g] < GAP_DENSITY}
     print("stop data gaps (no bus figures): " + ", ".join(sorted(f"{dongs[np.where(sgg_of == g)[0][0]]['sggnm']}({g_stop[g]})" for g in stop_gap)), flush=True)
+
+    # 3. coverage on a Web Mercator pixel grid, which is also the PM grid image
+    rail_xy = proj([s[0] for s in stations], [s[1] for s in stations])
+    bus_t, rail_t = cKDTree(proj(s_lon, s_lat)), cKDTree(rail_xy)
+    good = s_rte_ok >= GOOD_ROUTES
+    good_t = cKDTree(proj(s_lon[good], s_lat[good])) if good.any() else None
+    # PM anchors: stations, stops with GOOD_ROUTES+ routes, and every stop where route counts are unknown
+    anchor = good | ~np.isin(sgg_of[s_dong], list(route_ok))
+    anchor_t = cKDTree(proj(s_lon[anchor], s_lat[anchor]))
+    W, H = math.ceil((merc_x(LON1) - merc_x(LON0)) / PIX_M), math.ceil((merc_y(LAT1) - merc_y(LAT0)) / PIX_M)
+    img = np.zeros((H, W), np.uint8)  # GRID_CLASSES
+    cov = np.zeros((len(dongs), 8))  # bus, rail, either, well-served bus, walk, PM 5 min, PM 10 min, beyond
+    for i, g in enumerate(geoms):
+        lo0, la0, lo1, la1 = g.bounds
+        c = np.arange(max(0, int((merc_x(lo0) - merc_x(LON0)) / PIX_M)), min(W, int((merc_x(lo1) - merc_x(LON0)) / PIX_M) + 1))
+        r = np.arange(max(0, int((merc_y(LAT1) - merc_y(la1)) / PIX_M)), min(H, int((merc_y(LAT1) - merc_y(la0)) / PIX_M) + 1))
+        C_, R_ = np.meshgrid(c, r)
+        lon = LON0 + np.degrees((C_.ravel() + 0.5) * PIX_M / R_EARTH)
+        lat = inv_merc_y(merc_y(LAT1) - (R_.ravel() + 0.5) * PIX_M)
+        inside = shapely.contains_xy(g, lon, lat)
+        if inside.any():
+            pts, rr, cc = proj(lon[inside], lat[inside]), R_.ravel()[inside], C_.ravel()[inside]
+        else:  # smaller than a pixel
+            p = g.representative_point()
+            pts, rr, cc = proj([p.x], [p.y]), None, None
+        b = bus_t.query(pts, distance_upper_bound=BUS_M)[0] <= BUS_M
+        dr = rail_t.query(pts, distance_upper_bound=PM10_M)[0]
+        w = good_t.query(pts, distance_upper_bound=BUS_M)[0] <= BUS_M if good_t else np.zeros(len(pts), bool)
+        da = anchor_t.query(pts, distance_upper_bound=PM10_M)[0]
+        walk = (da <= BUS_M) | (dr <= RAIL_M)
+        near = np.minimum(da, dr)
+        cls = np.where(walk, 1, np.where(near <= PM5_M, 2, np.where(near <= PM10_M, 3, 4)))
+        if dongs[i]["sgg"] in stop_gap:
+            cls[:] = 5
+        if rr is not None:
+            img[rr, cc] = cls
+        cov[i] = [b.mean(), (dr <= RAIL_M).mean(), (b | (dr <= RAIL_M)).mean(), w.mean()] + [(cls == k).mean() for k in (1, 2, 3, 4)]
+    write_grid(img, W, H)
+
+    # destinations and context
+    n_store, store_ok, store_ym = load_stores(tree, dongs)
+    ind, ind_lost = load_industrial(dongs)
+    lh, lh_n, lh_addr = load_lh(dongs)
+    print(f"stores: {int(n_store.sum()):,} in {len(store_ok)} 시군구 ({store_ym or '-'}); 산업단지: {sum(v['n'] for v in ind.values())} in {len(ind)} 시군구, "
+          f"not mapped {', '.join(ind_lost) or '-'}; LH: {lh_addr} of {lh_n} 단지 with an address, {len(lh)} 시군구", flush=True)
+
+    # PM potential: mean percentile rank of PM-reachable share, population density and store density (행정동 with all three)
+    has = [i for i, d in enumerate(dongs) if d["sgg"] not in stop_gap and d["sgg"] in store_ok and pop[i] is not None]
+    pm_index = [None] * len(dongs)
+    if has:
+        def ranks(v):
+            o = np.argsort(np.argsort(v))
+            return o / max(len(v) - 1, 1)
+        idx = np.array(has)
+        score = (ranks(cov[idx, 5] + cov[idx, 6]) + ranks(np.array([pop[i] for i in has]) / area[idx]) + ranks(n_store[idx] / area[idx])) / 3
+        for i, v in zip(has, score):
+            pm_index[i] = round(float(v) * 100, 1)
 
     # per 행정동
     n_stop, n_known, n_few, sum_rte = (np.zeros(len(dongs)) for _ in range(4))
@@ -276,19 +425,22 @@ def main():
             n_few[i] += s_rte_ok[j] < GOOD_ROUTES
             sum_rte[i] += s_rte_ok[j]
     cols = ["code", "name", "sido", "sidonm", "sgg", "sggnm", "type", "pop", "area_km2", "stops", "stops_known", "stops_few",
-            "routes_sum", "bus500", "rail1k", "either", "good500", "route_ok", "osm_fill", "stop_gap"]
+            "routes_sum", "bus500", "rail1k", "either", "good500", "route_ok", "osm_fill", "stop_gap",
+            "walk", "pm5", "pm10", "far", "stores", "pm_index"]
     rows = []
     for i, d in enumerate(dongs):
         ok, gap = d["sgg"] in route_ok, d["sgg"] in stop_gap
         rows.append([d["code"], d["name"], d["sido"], d["sidonm"], d["sgg"], d["sggnm"], dong_type(d["name"]), pop[i],
                      round(area[i] / 1e6, 3), int(n_stop[i]), int(n_known[i]), int(n_few[i]), int(sum_rte[i]),
                      None if gap else round(cov[i, 0], 4), round(cov[i, 1], 4), None if gap else round(cov[i, 2], 4),
-                     round(cov[i, 3], 4) if ok and not gap else None, int(ok), int(d["sgg"] in fill), int(gap)])
+                     round(cov[i, 3], 4) if ok and not gap else None, int(ok), int(d["sgg"] in fill), int(gap)]
+                    + ([None] * 4 if gap else [round(cov[i, k], 4) for k in (4, 5, 6, 7)])
+                    + [int(n_store[i]) if d["sgg"] in store_ok else None, pm_index[i]])
     a = area / 1e6
+    u = np.array([dong_type(d["name"]) == "동" for d in dongs])
     print(f"coverage (area-weighted): bus {np.sum(cov[:, 0] * a) / a.sum():.1%}, rail {np.sum(cov[:, 1] * a) / a.sum():.1%}, "
-          f"either {np.sum(cov[:, 2] * a) / a.sum():.1%}; 동 only bus "
-          f"{sum(cov[i, 0] * a[i] for i, d in enumerate(dongs) if dong_type(d['name']) == '동') / sum(a[i] for i, d in enumerate(dongs) if dong_type(d['name']) == '동'):.1%}",
-          flush=True)
+          f"either {np.sum(cov[:, 2] * a) / a.sum():.1%}; 동 only bus {np.sum(cov[u, 0] * a[u]) / a[u].sum():.1%}; "
+          f"동 only walk / PM 5 / PM 10 / beyond: " + " / ".join(f"{np.sum(cov[u, k] * a[u]) / a[u].sum():.1%}" for k in (4, 5, 6, 7)), flush=True)
 
     trips, tmonths, tlost = load_trips(dongs)
     print(f"trips: {len(trips)} 시군구 (months {', '.join(tmonths) or '-'}), "
@@ -301,10 +453,14 @@ def main():
     nogo = sorted({d["sidonm"] + " " + d["sggnm"] for d in dongs if d["sgg"] not in upis})
     print(f"도시지역 ({upis_year}): {len(upis)} of {len(set(sgg_of))} 시군구; without: {', '.join(nogo) or '-'}", flush=True)
     meta = {"boundary": adm["ver"], "trips_months": tmonths, "upis_year": upis_year, "pop_ym": pop_raw["ym"], "stops_collected": sm["collected"], "route_days": rdays,
-            "n_stops": int(len(s_lon)), "n_osm_added": int(add.sum()), "n_stations": len(stations),
-            "bus_m": BUS_M, "rail_m": RAIL_M, "grid_m": GRID_M, "good_routes": GOOD_ROUTES}
+            "n_stops": int(len(s_lon)), "n_osm_added": int(add.sum()), "n_stations": len(stations), "stores_ym": store_ym,
+            "industrial_date": next(iter(ind.values()))["date"] if ind else None, "lh_table": lh_table(),
+            "bus_m": BUS_M, "rail_m": RAIL_M, "grid_m": round(PIX_M * math.cos(math.radians(36))), "good_routes": GOOD_ROUTES,
+            "pm_speed": PM_SPEED_KMH, "pm_detour": PM_DETOUR, "pm5_m": PM5_M, "pm10_m": PM10_M,
+            "grid_bounds": [[LON0, inv_merc_y(merc_y(LAT1))], [LON0 + np.degrees(W * PIX_M / R_EARTH), inv_merc_y(merc_y(LAT1) - H * PIX_M)]]}
     with open(os.path.join(OUT, "stats.json"), "w", encoding="utf-8") as f:
-        json.dump({"meta": meta, "cols": cols, "rows": rows, "sgg_trips": sgg_trips, "sgg_urban": upis}, f, ensure_ascii=False, separators=(",", ":"))
+        json.dump({"meta": meta, "cols": cols, "rows": rows, "sgg_trips": sgg_trips, "sgg_urban": upis, "sgg_industrial": ind, "sgg_lh": lh},
+                  f, ensure_ascii=False, separators=(",", ":"))
     feats = []
     for i, g in enumerate(geoms):
         s = shapely.simplify(g, SIMPLIFY_DEG, preserve_topology=True)
@@ -321,9 +477,10 @@ def main():
         w.writerow(["행정동코드", "행정동", "시도코드", "시도", "시군구코드", "시군구", "구분", "주민등록인구", "면적_km2", "정류장수",
                     "노선수확인정류장", f"노선{GOOD_ROUTES - 1}개이하정류장", "정차노선합계", f"버스{BUS_M}m권역비율",
                     f"철도{RAIL_M}m권역비율", "버스또는철도권역비율", f"노선{GOOD_ROUTES}개이상정류장{BUS_M}m권역비율",
-                    "노선수자료있음", "OSM정류장보완", "정류장위치자료부족"])
+                    "노선수자료있음", "OSM정류장보완", "정류장위치자료부족", "도보권비율", "PM5분권비율", "PM10분권비율",
+                    "PM으로도먼곳비율", "상가업소수", "PM잠재지수"])
         w.writerows(rows)
-    for name in ("stats.json", "dongs.geojson", "stops.json", "stations.json"):
+    for name in ("stats.json", "dongs.geojson", "stops.json", "stations.json", "pmgrid.png"):
         print(f"  {name}: {os.path.getsize(os.path.join(OUT, name)) / 1e6:.1f} MB", flush=True)
 
 

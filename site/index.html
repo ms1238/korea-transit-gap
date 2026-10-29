@@ -10,16 +10,19 @@
 <body>
 <header>
   <h1>전국 대중교통 소외지역</h1>
-  <p class="sub">행정동별로 버스 정류장·철도역에서 걸어서 닿기 어려운 면적과, 정류장은 있어도 노선이 드문 곳을 보여 줍니다. <a href="about.html">지표 설명·출처·한계</a></p>
+  <p class="sub">행정동별로 버스 정류장·철도역에서 걸어서 닿기 어려운 면적, 정류장은 있어도 노선이 드문 곳, 그리고 걷기엔 멀지만 PM(개인형 이동장치)으로 5~10분이면 정류장·역에 닿는 곳을 보여 줍니다. <a href="about.html">지표 설명·출처·한계</a></p>
   <p class="sub" id="asof"></p>
 </header>
 
 <section class="controls">
   <label>지표 <select id="metric"></select></label>
-  <label>지역 <select id="sido"><option value="">전국</option></select></label>
+  <label>시도 <select id="sido"><option value="">전국</option></select></label>
+  <label>시군구 <select id="sgg"><option value="">전체</option></select></label>
+  <label>읍면동 <select id="dong"><option value="">전체</option></select></label>
   <label class="chk"><input type="checkbox" id="urban"> 동 지역만 (도시형 행정동)</label>
   <label class="chk"><input type="checkbox" id="show-stops" checked> 정류장</label>
   <label class="chk"><input type="checkbox" id="show-rail" checked> 철도역</label>
+  <label class="chk"><input type="checkbox" id="show-grid"> PM 연계 격자</label>
 </section>
 
 <section class="mapwrap">
