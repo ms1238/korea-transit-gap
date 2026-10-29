@@ -41,6 +41,19 @@ def molit(pk):
     return f
 
 
+def odcloud(ns):
+    """odcloud dataset: list its tables, then call the latest one."""
+    def f():
+        spec = requests.get(f"https://infuser.odcloud.kr/oas/docs?namespace={ns}", timeout=60).json()
+        print("  title:", spec.get("info", {}).get("title"))
+        paths = sorted(spec["paths"], key=lambda p: spec["paths"][p]["get"].get("summary", ""))
+        for p in paths[-3:]:
+            print("  table:", p, spec["paths"][p]["get"].get("summary", ""))
+        d = requests.get("https://api.odcloud.kr/api" + paths[-1], params={"serviceKey": KEY, "page": 1, "perPage": 3, "returnType": "JSON"}, timeout=90)
+        print("  latest:", d.status_code, d.text[:1500])
+    return f
+
+
 def search(keyword, dtype):
     def f():
         page = requests.get("https://www.data.go.kr/tcs/dss/selectDataSetList.do", headers=H, timeout=60,
@@ -51,9 +64,6 @@ def search(keyword, dtype):
     return f
 
 
-for pk, title in [("15142067", "정류장별 정차 노선수"), ("15142065", "정류장별 경유노선별 이용량"), ("15142068", "노선별 혼잡도"),
-                  ("15142055", "평균통행시간"), ("15142056", "평균통행거리")]:
-    show(f"{pk} {title}", molit(pk))
-show("search 한국교통안전공단 버스 노선 (file)", search("한국교통안전공단 버스 노선", "FILE"))
-show("search 한국교통안전공단 버스 노선 (API)", search("한국교통안전공단 버스 노선", "API"))
-show("search 버스 노선별 경유 정류소", search("노선별 경유 정류소", "FILE"))
+for ns in ("15150448/v1", "15150455/v1", "15162302/v1", "15144160/v1", "15135605/v1"):
+    show(f"odcloud {ns}", odcloud(ns))
+show("15142067 정류장별 정차 노선수 (retry)", molit("15142067"))
