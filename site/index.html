@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>전국 대중교통 소외지역</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>전국 대중교통 소외지역</h1>
+  <p class="sub">행정동별로 버스 정류장·철도역에서 걸어서 닿기 어려운 면적과, 정류장은 있어도 노선이 드문 곳을 보여 줍니다. <a href="about.html">지표 설명·출처·한계</a></p>
+  <p class="sub" id="asof"></p>
+</header>
+
+<section class="controls">
+  <label>지표 <select id="metric"></select></label>
+  <label>지역 <select id="sido"><option value="">전국</option></select></label>
+  <label class="chk"><input type="checkbox" id="urban"> 동 지역만 (도시형 행정동)</label>
+  <label class="chk"><input type="checkbox" id="show-stops" checked> 정류장</label>
+  <label class="chk"><input type="checkbox" id="show-rail" checked> 철도역</label>
+</section>
+
+<section class="mapwrap">
+  <div id="map"></div>
+  <div class="legend" id="legend"></div>
+</section>
+<p class="note" id="metric-note"></p>
+<p class="summary" id="summary"></p>
+
+<section>
+  <div class="head"><h2 id="sgg-title">시군구 순위</h2><button id="sgg-csv">CSV</button></div>
+  <p class="note">표 머리를 누르면 정렬, 행을 누르면 그 시군구의 행정동 목록과 지도로 이동합니다. 비율은 면적 가중 평균입니다. 승차·환승·경로 열은 교통카드 월간 통행(시군구 전체, 출발 기준)을 하루 평균으로 나눈 값으로, '동 지역만'과 관계없이 시군구 전체 값입니다.</p>
+  <div class="tablewrap"><table id="sgg-table"></table></div>
+</section>
+
+<section>
+  <div class="head"><h2 id="dong-title">행정동</h2><button id="dong-csv">CSV</button> <a class="btn" href="data/download/dongs.csv" download>전체 행정동 CSV</a></div>
+  <div class="tablewrap"><table id="dong-table"></table></div>
+</section>
+
+<footer>
+  <p>자료: 국토교통부 전국 버스정류장 위치정보·정류장별 정차 노선수(공공데이터포털), 행정안전부 주민등록 인구, 통계청 행정동 경계(vuski/admdongkor), © OpenStreetMap 기여자. 자세한 내용은 <a href="about.html">설명 페이지</a>.</p>
+</footer>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

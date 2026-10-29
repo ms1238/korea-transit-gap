@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["site/**", "scripts/**", ".github/workflows/**", "requirements.txt"]
+    paths: ["site/**", "scripts/**", ".github/workflows/update.yml", "requirements.txt"]
 
 permissions:
   contents: write  # temporary: the dev-raw branch

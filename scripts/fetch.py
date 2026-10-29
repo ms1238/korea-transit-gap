@@ -5,11 +5,12 @@
 - stops_molit:  국토교통부 전국 버스정류장 위치정보 (yearly file; only 지자체 whose BIS is linked to TAGO)
 - stops_osm:    bus stops from OpenStreetMap (fills 시군구 missing from the 국토부 file)
 - stations_osm: railway stations and halts from OpenStreetMap (도시철도, 광역·일반철도, KTX)
-- routes:       국토교통부 정류장별 정차 노선수 (교통카드 data), one 시군구 per file under raw/routes/;
-                the API is slow, so each run fetches what fits in ROUTES_BUDGET_MIN and later runs continue
+- routes:       국토교통부 정류장별 정차 노선수 (교통카드 data), one 시군구 per file under raw/routes/
+- trips:        국토교통부 교통수단별 이용량 and 환승 이용량 (교통카드 data, monthly), summed per 시군구 under raw/trips/
+                These APIs are slow, so each run fetches what fits in API_BUDGET_MIN and later runs continue.
 
 `--only-missing` fetches only sources that have no file in raw/ yet (code pushes reuse the cached data);
-routes always continue within their budget.
+routes and trips always continue within their budget.
 
 Keys come from the environment (GitHub Actions secrets) and must never be written into the repository:
 DATA_GO_KR_KEY (공공데이터포털).
@@ -32,7 +33,12 @@ ADMDONG_REPO = "https://api.github.com/repos/vuski/admdongkor/contents"
 POPULATION = "https://apis.data.go.kr/1741000/admmPpltnHhStus/selectAdmmPpltnHhStus"
 STOPS_PAGE = "https://www.data.go.kr/data/15067528/fileData.do"
 ROUTES = "https://apis.data.go.kr/1613000/NumberofRoutesServingEachStop/getNumberofRoutesServingEachStop"
-ROUTES_BUDGET_MIN = 45  # per run; the job limit is 90 minutes
+API_BUDGET_MIN = 55  # 정차 노선수 and trip volumes together, per run; the job limit is 90 minutes
+DEADLINE = [0.0]
+TRIPS = {  # kind -> (monthly operation, mode field or None)
+    "modes": ("https://apis.data.go.kr/1613000/TransportationModeTripVolume/getMonthlyTransportationModeTripVolume", "trfc_mns_nm"),
+    "transfer": ("https://apis.data.go.kr/1613000/TransferTripVolume/getMonthlyTransferTripVolume", None),
+}
 ROUTES_PROBE = ("47", "47170")  # 경북 안동시: a 시군구 whose code did not change in the 2026 reorganizations
 STCIS_AREAS = "https://stcis.go.kr/openapi/areacode.json"
 STCIS_SIDO = ["11", "12", "26", "27", "28", "29", "30", "31", "36", "41", "43", "44", "46", "47", "48", "50", "51", "52"]
@@ -48,7 +54,7 @@ STATIONS_QUERY = """[out:json][timeout:240];
 area["ISO3166-1"="KR"][admin_level=2]->.k;
 nwr["railway"~"^(station|halt)$"](area.k);
 out center tags;"""
-SOURCES = ["admin_dong", "dong_pop", "stops_molit", "stops_osm", "stations_osm", "routes"]
+SOURCES = ["admin_dong", "dong_pop", "stops_molit", "stops_osm", "stations_osm", "routes", "trips"]
 
 
 def save_json(name, data):
@@ -196,25 +202,44 @@ def fetch_stations_osm(_key):
     save_json("stations_osm.json", out)
 
 
-def routes_call(key, day, ctpv, sgg, page, rows=1000):
-    """One page of 정차 노선수; (totalCount, items), totalCount 0 when the API has no data."""
+def api_call(url, params, what):
+    """One page of a 1613000 (교통카드) API; (totalCount, items), totalCount 0 when the API has no data."""
     for attempt in range(3):
         try:
-            d = requests.get(ROUTES, timeout=(15, 180), params={"serviceKey": key, "pageNo": page, "numOfRows": rows,
-                                                                "dataType": "JSON", "opr_ymd": day, "ctpv_cd": ctpv, "sgg_cd": sgg}).json()
+            d = requests.get(url, timeout=(15, 180), params=params).json()
+            if "Response" not in d and "Error" not in d:  # e.g. the gateway's SERVICETIMEOUT_ERROR
+                raise RuntimeError(str(d)[:200])
             break
         except Exception as e:  # noqa: BLE001
             err = e
             time.sleep(10)
     else:
-        raise RuntimeError(f"{day} {sgg} page {page}: {err}")
+        raise RuntimeError(f"{what}: {err}")
     if "Error" in d:
         if d["Error"].get("code") == "50":  # NO_DATA_FOUND
             return 0, []
-        raise RuntimeError(f"{day} {sgg}: {d['Error']}")
+        raise RuntimeError(f"{what}: {d['Error']}")
     body = d["Response"]["body"]
     items = (body.get("items") or {}).get("item") or []
     return int(body.get("totalCount") or 0), ([items] if isinstance(items, dict) else items)
+
+
+def routes_call(key, day, ctpv, sgg, page, rows=1000):
+    return api_call(ROUTES, {"serviceKey": key, "pageNo": page, "numOfRows": rows, "dataType": "JSON", "opr_ymd": day,
+                             "ctpv_cd": ctpv, "sgg_cd": sgg}, f"{day} {sgg} page {page}")
+
+
+def every_page(call):
+    """All rows of a paged call(page) -> (total, items)."""
+    total, rows = call(1)
+    rows, page = list(rows), 1
+    while len(rows) < total:
+        page += 1
+        got = call(page)[1]
+        if not got:
+            break
+        rows += got
+    return rows
 
 
 def routes_day(key):
@@ -247,7 +272,13 @@ def routes_areas(key, day):
         else:
             raise RuntimeError(f"STCIS 지역코드 {sd}: {err}")
         cands += [(sd, r["sggCd"], r["sggNm"]) for r in d.get("result") or [] if r.get("sggCd")]
-    areas = [[sd, sgg, name] for sd, sgg, name in dict.fromkeys(cands) if routes_call(key, day, sd, sgg, 1, 1)[0]]
+    def has_data(sd, sgg):
+        try:
+            return routes_call(key, day, sd, sgg, 1, 1)[0] > 0
+        except RuntimeError as e:
+            print(f"  routes {sgg}: {e}", flush=True)
+            return False
+    areas = [[sd, sgg, name] for sd, sgg, name in dict.fromkeys(cands) if has_data(sd, sgg)]
     print(f"routes: {day}, {len(cands)} candidate 시군구 codes, {len(areas)} with data", flush=True)
     if len(areas) < 150:
         raise RuntimeError(f"only {len(areas)} 시군구 with data")
@@ -265,15 +296,15 @@ def fetch_routes(key):
         save_json(os.path.join("routes", day, "areas.json"), routes_areas(key, day))
     areas = json.load(open(areas_file, encoding="utf-8"))
     todo = [a for a in areas if not os.path.exists(os.path.join(folder, f"{a[0]}_{a[1]}.json"))]
-    start, done = time.time(), 0
+    done = 0
     for ctpv, sgg, name in todo:
-        if time.time() - start > ROUTES_BUDGET_MIN * 60:
+        if time.time() > DEADLINE[0]:
             break
-        total, items = routes_call(key, day, ctpv, sgg, 1)
-        rows, page = list(items), 1
-        while len(rows) < total:
-            page += 1
-            rows += routes_call(key, day, ctpv, sgg, page)[1]
+        try:
+            rows = every_page(lambda page: routes_call(key, day, ctpv, sgg, page))
+        except RuntimeError as e:  # a slow 시군구 waits for the next run
+            print(f"  routes {sgg}: {e}", flush=True)
+            continue
         stops = {}
         for r in rows:
             stops[r["sttn_id"]] = [r["sttn_id"], r["sttn_nm"] or "", r["emd_cd"] or "", max(r["rte_cnt"] or 0, stops.get(r["sttn_id"], [0, 0, 0, 0])[3])]
@@ -282,6 +313,55 @@ def fetch_routes(key):
         done += 1
     left = len(todo) - done
     print(f"routes: {day}, {len(areas)} 시군구, fetched {done} this run, {left} left", flush=True)
+
+
+def trips_month(key):
+    """The latest month the trip-volume API has data for."""
+    first = date.today().replace(day=1)
+    for k in range(1, 13):
+        ym = (first - timedelta(days=28 * k - 1)).strftime("%Y%m")
+        if api_call(TRIPS["modes"][0], {"serviceKey": key, "pageNo": 1, "numOfRows": 1, "dataType": "JSON", "opr_ym": ym,
+                                        "ctpv_cd": ROUTES_PROBE[0], "sgg_cd": ROUTES_PROBE[1]}, ym)[0]:
+            return ym
+    raise RuntimeError("no month in the last year has data")
+
+
+def fetch_trips(key):
+    """Monthly 교통카드 trips per 시군구 (국토교통부 교통수단별 이용량, 환승 이용량), summed over 법정동 and hours:
+    raw/trips/<ym>/<kind>_<ctpv>_<sgg>.json = {sgg_nm, ocrn, arvl, by_mode {mode: [ocrn, arvl]}, by_user {type: ocrn}}
+    (ocrn = 출발·승차 통행, arvl = 도착 통행). Runs after routes, whose 시군구 list it reuses, within the same budget."""
+    days = sorted(d for d in os.listdir(os.path.join(RAW, "routes")) if os.path.exists(os.path.join(RAW, "routes", d, "areas.json")))
+    if not days:
+        raise RuntimeError("no 시군구 list yet (routes)")
+    areas = json.load(open(os.path.join(RAW, "routes", days[-1], "areas.json"), encoding="utf-8"))
+    ym = trips_month(key)
+    folder = os.path.join(RAW, "trips", ym)
+    todo = [(k, a) for k in TRIPS for a in areas if not os.path.exists(os.path.join(folder, f"{k}_{a[0]}_{a[1]}.json"))]
+    done = 0
+    for kind, (ctpv, sgg, name) in todo:
+        if time.time() > DEADLINE[0]:
+            break
+        url, mode_field = TRIPS[kind]
+        try:
+            rows = every_page(lambda page: api_call(url, {"serviceKey": key, "pageNo": page, "numOfRows": 1000, "dataType": "JSON",
+                                                          "opr_ym": ym, "ctpv_cd": ctpv, "sgg_cd": sgg}, f"{kind} {ym} {sgg} page {page}"))
+        except RuntimeError as e:
+            print(f"  trips {kind} {sgg}: {e}", flush=True)
+            continue
+        out = {"sgg_nm": rows[0]["sgg_nm"] if rows else name, "ocrn": 0, "arvl": 0, "by_mode": {}, "by_user": {}}
+        for r in rows:
+            o, a = r.get("ocrn_pasg_nope") or 0, r.get("arvl_pasg_nope") or 0
+            out["ocrn"] += o
+            out["arvl"] += a
+            if mode_field:
+                m = out["by_mode"].setdefault(r.get(mode_field) or "기타", [0, 0])
+                m[0] += o
+                m[1] += a
+            u = r.get("users_type_nm") or "기타"
+            out["by_user"][u] = out["by_user"].get(u, 0) + o
+        save_json(os.path.join("trips", ym, f"{kind}_{ctpv}_{sgg}.json"), out)
+        done += 1
+    print(f"trips: {ym}, {len(areas)} 시군구 x {len(TRIPS)}, fetched {done} this run, {len(todo) - done} left", flush=True)
 
 
 def main():
@@ -293,10 +373,11 @@ def main():
     os.makedirs(RAW, exist_ok=True)
     only_missing = "--only-missing" in sys.argv
     names = [a for a in sys.argv[1:] if not a.startswith("--")] or SOURCES
+    DEADLINE[0] = time.time() + API_BUDGET_MIN * 60
     failed = []
     for name in names:
-        have = os.path.exists(os.path.join(RAW, name if name == "routes" else name + ".json"))
-        if only_missing and have and name != "routes":
+        have = os.path.exists(os.path.join(RAW, name if name in ("routes", "trips") else name + ".json"))
+        if only_missing and have and name not in ("routes", "trips"):
             continue
         try:
             globals()[f"fetch_{name}"](key)
