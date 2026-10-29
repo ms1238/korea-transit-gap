@@ -25,7 +25,7 @@ const METRICS = [
     note: m => `도시철도·광역철도·일반철도·KTX 역에서 직선거리 ${m.rail_m / 1000}km가 넘는 면적의 비율입니다.` },
 ];
 
-let D, C, GEO, T, U, IND, LH, SGGPOP, meta, map, sortSgg = { k: 'v', asc: false }, sortDong = { k: 'v', asc: false }, pickSgg = null;
+let D, C, GEO, T, U, IND, LH, AGE, SGGPOP, meta, map, sortSgg = { k: 'v', asc: false }, sortDong = { k: 'v', asc: false }, pickSgg = null;
 const st = { metric: 'either', sido: '', urban: false };
 
 function agg(rows) {
@@ -50,7 +50,7 @@ const cls = v => v == null ? -1 : Math.min(4, Math.floor(v * 5));
 
 async function main() {
   const [stats, geo] = await Promise.all([fetch('data/stats.json').then(r => r.json()), fetch('data/dongs.geojson').then(r => r.json())]);
-  D = stats.rows; meta = stats.meta; T = stats.sgg_trips || {}; U = stats.sgg_urban || {}; IND = stats.sgg_industrial || {}; LH = stats.sgg_lh || {}; C = Object.fromEntries(stats.cols.map((c, i) => [c, i]));
+  D = stats.rows; meta = stats.meta; T = stats.sgg_trips || {}; U = stats.sgg_urban || {}; IND = stats.sgg_industrial || {}; LH = stats.sgg_lh || {}; AGE = stats.sgg_age || {}; C = Object.fromEntries(stats.cols.map((c, i) => [c, i]));
   SGGPOP = {};
   for (const r of D) SGGPOP[r[C.sgg]] = (SGGPOP[r[C.sgg]] || 0) + (r[C.pop] || 0);
   $('asof').textContent = `기준: 정류장 위치 ${meta.stops_collected} 수집 · 정차 노선수 ${meta.route_days.length ? meta.route_days.map(d => d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6)).join(', ') + ' 운행일' : '수집 중'}${meta.upis_year ? ' · 도시계획현황 ' + meta.upis_year + '년' : ''}${meta.trips_months.length ? ' · 교통카드 통행 ' + meta.trips_months.map(m => m.slice(0, 4) + '년 ' + +m.slice(4) + '월').join(', ') : ''} · 인구 ${meta.pop_ym.slice(0, 4)}년 ${+meta.pop_ym.slice(4)}월 · 행정동 경계 ${meta.boundary.replace('ver', '')}`;
@@ -157,6 +157,7 @@ function pickSggRow(sgg) {
   $('sgg').value = sgg || '';
   fillDong();
   renderDongs(D.filter(visible), metric());
+  renderInsights();
   zoomTo(D.filter(d => sgg ? d[C.sgg] === sgg : !st.sido || d[C.sido] === st.sido));
 }
 
@@ -183,6 +184,49 @@ function render() {
   paintMap();
   renderSgg(rows, m);
   renderDongs(rows, m);
+  renderInsights();
+}
+
+// plain-language findings for the current selection (시도 / 시군구, 동 지역 filter)
+function renderInsights() {
+  const pmM = METRICS.find(q => q.id === 'pm'), gapM = METRICS[0], fewM = METRICS.find(q => q.id === 'few');
+  const scope = D.filter(r => (!st.urban || r[C.type] === '동') && (!st.sido || r[C.sido] === st.sido) && (!pickSgg || r[C.sgg] === pickSgg));
+  if (!scope.length) { $('insights').innerHTML = ''; return; }
+  const name = pickSgg ? `${scope[0][C.sidonm]} ${scope[0][C.sggnm]}` : st.sido ? scope[0][C.sidonm] : '전국';
+  $('ins-title').textContent = `지역별 인사이트 · ${name}${st.urban ? ' 동 지역' : ''}`;
+  const x = agg(scope), li = [];
+  const nat = agg(D.filter(r => !st.urban || r[C.type] === '동'));
+  if (x.pmArea) li.push(`땅 면적으로 보면 <b>${pct(x.walk / x.pmArea)}</b>는 걸어서 정류장·역에 닿고, <b>${pct((x.pm5 + x.pm10) / x.pmArea)}</b>는 걷기엔 멀지만 PM으로 10분 안에 닿습니다. PM으로도 먼 곳은 ${pct(x.far / x.pmArea)}입니다.`
+    + (name !== '전국' && nat.pmArea ? ` (전국${st.urban ? ' 동 지역' : ''} PM 10분권 ${pct((nat.pm5 + nat.pm10) / nat.pmArea)})` : ''));
+  const top = (list, k, n, f) => list.filter(r => r[k] != null).sort((a, b) => b[k] - a[k]).slice(0, n).map(f).join(', ');
+  if (!pickSgg) {
+    const sg = sgRows(scope, pmM).filter(r => !r.gap);
+    const t1 = top(sg, 'pm', 3, r => `${esc(r.name.replace(/^\S+ /, ''))} ${pct(r.pm)}`);
+    if (t1) li.push(`PM이 첫·마지막 구간을 메울 땅이 넓은 시군구: <b>${t1}</b>`);
+    const t2 = top(sg, 'pmidx', 3, r => `${esc(r.name.replace(/^\S+ /, ''))} ${(r.pmidx * 100).toFixed(0)}`);
+    if (t2) li.push(`PM 잠재 지수(인구·상가 밀도까지 반영)가 높은 시군구: <b>${t2}</b>`);
+    const t3 = top(sg, 'either', 3, r => `${esc(r.name.replace(/^\S+ /, ''))} ${pct(r.either)}`);
+    if (t3) li.push(`버스·철도 어디에도 걸어서 닿기 어려운 땅이 넓은 시군구: <b>${t3}</b>`);
+    const t4 = top(sg.filter(r => r.few != null && r.stops >= 100), 'few', 3, r => `${esc(r.name.replace(/^\S+ /, ''))} ${pct(r.few)}`);
+    if (t4) li.push(`정류장은 있어도 노선이 1~2개뿐인 정류장 비율이 높은 시군구: <b>${t4}</b>`);
+  } else {
+    const sidoX = agg(D.filter(r => (!st.urban || r[C.type] === '동') && r[C.sido] === scope[0][C.sido]));
+    const v = pmM.v(x), sv = pmM.v(sidoX);
+    if (v != null && sv != null) li.push(`PM 10분 안에 새로 닿는 땅의 비율은 ${pct(v)}로, ${esc(scope[0][C.sidonm])} 평균(${pct(sv)})보다 <b>${v > sv ? '높습니다' : '낮습니다'}</b>.`);
+    const dt = top(scope, C.pm_index, 3, r => `${esc(r[C.name])} ${r[C.pm_index].toFixed(0)}`);
+    if (dt) li.push(`이 시군구에서 PM 잠재 지수가 높은 읍면동: <b>${dt}</b>`);
+    const dg = top(scope.filter(r => r[C.walk] != null).map(r => Object.assign([...r], { pmv: r[C.pm5] + r[C.pm10] })), 'pmv', 3, r => `${esc(r[C.name])} ${pct(r.pmv)}`);
+    if (dg) li.push(`PM 10분권 비율이 높은 읍면동: <b>${dg}</b>`);
+    const f = fewM.v(x);
+    if (f != null) li.push(`정차 노선수가 확인된 정류장 가운데 노선이 1~2개뿐인 곳이 ${pct(f)}입니다.`);
+    const t = trips(pickSgg), ag = AGE[pickSgg];
+    if (ag) li.push(`20~39세 주민 비중 ${pct(ag.y2039)}, 70세 이상 ${pct(ag.o70)}` + (t.elder != null ? ` · 교통카드 승차 가운데 경로 비중 ${pct(t.elder)}` : '') + '.');
+    if (IND[pickSgg]) li.push(`산업단지 ${IND[pickSgg].n}곳(가동업체 ${fmt(IND[pickSgg].firms)}곳${IND[pickSgg].city ? ', ' + esc(IND[pickSgg].city) + ' 전체' : ''})은 출퇴근 목적지로, 역과 떨어져 있으면 PM 연계 후보입니다.`);
+  }
+  const gaps = [...new Set(scope.filter(r => r[C.stop_gap]).map(r => r[C.sggnm]))], noRoute = new Set(scope.filter(r => !r[C.route_ok]).map(r => r[C.sgg])).size;
+  if (gaps.length) li.push(`<small>정류장 위치 자료가 부족해 버스 지표를 뺀 곳: ${gaps.map(esc).join(', ')}</small>`);
+  if (noRoute) li.push(`<small>정차 노선수 자료가 없거나 수집 중인 시군구 ${noRoute}곳은 노선 관련 지표가 비어 있습니다.</small>`);
+  $('insights').innerHTML = li.map(s => `<li>${s}</li>`).join('');
 }
 
 function legend(m) {
@@ -208,7 +252,7 @@ function sgRows(rows, m) {
     const x = agg(rs);
     return { sgg: rs[0][C.sgg], name: `${rs[0][C.sidonm]} ${rs[0][C.sggnm]}`, pop: x.pop, area: x.area, stops: x.stops,
       v: m.v(x), gap: rs[0][C.stop_gap], either: METRICS[0].v(x), few: METRICS[3].v(x), route: rs[0][C.route_ok], osm: rs[0][C.osm_fill], ...trips(rs[0][C.sgg]), pm: METRICS.find(q => q.id === 'pm').v(x), pmidx: METRICS.find(q => q.id === 'pmidx').v(x), stores: x.storeArea ? x.stores : null,
-      firms: IND[rs[0][C.sgg]]?.firms ?? null, icity: IND[rs[0][C.sgg]]?.city ?? null, lh: LH[rs[0][C.sgg]]?.units ?? null,
+      firms: IND[rs[0][C.sgg]]?.firms ?? null, icity: IND[rs[0][C.sgg]]?.city ?? null, lh: LH[rs[0][C.sgg]]?.units ?? null, y2039: AGE[rs[0][C.sgg]]?.y2039 ?? null, o70: AGE[rs[0][C.sgg]]?.o70 ?? null,
       uarea: U[rs[0][C.sgg]]?.area ?? null, upop: U[rs[0][C.sgg]]?.pop ?? null, ucity: U[rs[0][C.sgg]]?.city ?? null };
   });
 }
@@ -245,14 +289,14 @@ function renderSgg(rows, m) {
     { k: 'either', h: '버스·철도 도보권 밖', f: pct }, { k: 'few', h: '노선 2개 이하 정류장', f: pct },
     { k: 'pm', h: 'PM 10분 새로 닿는 면적', f: pct }, { k: 'pmidx', h: 'PM 잠재 지수', f: v => v == null ? '-' : (v * 100).toFixed(1) },
     { k: 'stores', h: '상가업소', f: fmt }, { k: 'firms', h: '산업단지 가동업체', f: (v, r) => fmt(v) + (r.icity && v != null ? ` <small title="${esc(r.icity)} 전체 값">시</small>` : '') },
-    { k: 'lh', h: 'LH 임대 세대', f: fmt },
+    { k: 'lh', h: 'LH 임대 세대', f: fmt }, { k: 'y2039', h: '20~39세 비중', f: pct }, { k: 'o70', h: '70세 이상 비중', f: pct },
     { k: 'uarea', h: '법정 도시지역 면적', f: (v, r) => pct(v) + (r.ucity && v != null ? ` <small title="${esc(r.ucity)} 전체 값">시</small>` : '') },
     { k: 'upop', h: '도시지역 거주 인구', f: pct },
     { k: 'trip', h: '주민 1인당 하루 승차', f: v => v == null ? '-' : v.toFixed(2) }, { k: 'transfer', h: '환승 통행 비중', f: pct }, { k: 'elder', h: '경로 승차 비중', f: pct }];
   sggShown = table($('sgg-table'), cols, sgRows(rows, m), sortSgg, k => { sortSgg = { k, asc: sortSgg.k === k ? !sortSgg.asc : k === 'name' }; render(); },
     r => { pickSggRow(r.sgg); $('dong-title').scrollIntoView({ behavior: 'smooth' }); });
-  $('sgg-csv').onclick = () => csv(`시군구_${st.metric}.csv`, ['시군구코드', '시군구', m.name, '인구', '면적_km2', '정류장', '버스철도도보권밖', '노선2개이하정류장비율', 'PM10분새로닿는면적비율', 'PM잠재지수', '상가업소', '산업단지가동업체', 'LH임대세대', '법정도시지역면적비율', '도시지역거주인구비율', '주민1인당하루승차', '환승통행비중', '경로승차비중', '노선수자료', 'OSM보완'],
-    sggShown.map(r => [r.sgg, r.name, r.v, r.pop, r.area.toFixed(3), r.stops, r.either, r.few, r.pm, r.pmidx == null ? null : (r.pmidx * 100).toFixed(1), r.stores, r.firms, r.lh, r.uarea, r.upop, r.trip, r.transfer, r.elder, r.route, r.osm]));
+  $('sgg-csv').onclick = () => csv(`시군구_${st.metric}.csv`, ['시군구코드', '시군구', m.name, '인구', '면적_km2', '정류장', '버스철도도보권밖', '노선2개이하정류장비율', 'PM10분새로닿는면적비율', 'PM잠재지수', '상가업소', '산업단지가동업체', 'LH임대세대', '20~39세비중', '70세이상비중', '법정도시지역면적비율', '도시지역거주인구비율', '주민1인당하루승차', '환승통행비중', '경로승차비중', '노선수자료', 'OSM보완'],
+    sggShown.map(r => [r.sgg, r.name, r.v, r.pop, r.area.toFixed(3), r.stops, r.either, r.few, r.pm, r.pmidx == null ? null : (r.pmidx * 100).toFixed(1), r.stores, r.firms, r.lh, r.y2039, r.o70, r.uarea, r.upop, r.trip, r.transfer, r.elder, r.route, r.osm]));
 }
 
 function renderDongs(rows, m) {

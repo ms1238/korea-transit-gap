@@ -12,7 +12,7 @@
    GRID_CLASSES (도보권, PM 5분권, PM 10분권, beyond) around PM anchors (stations, well-served stops, and every stop where
    route counts are unknown), drawn as pmgrid.png. Distances are straight lines.
 3b. PM 잠재 지수 per 행정동: mean percentile rank of the PM-reachable share, population density and 상가 density.
-3c. 산업단지 (한국산업단지공단) and LH 임대 세대 per 시군구.
+3c. 산업단지 (한국산업단지공단), LH 임대 세대 and age structure (20–39, 70+) per 시군구.
 4. 행정동 type from the name: 동 (urban 행정구역), 읍, 면.
 5. Monthly 교통카드 trips per 시군구 (교통수단별 이용량, 환승 이용량), as a daily average of 출발·승차 통행.
 6. 법정 도시지역 (국토계획법 용도지역) area and population shares per 시군구 from the 도시계획현황 statistics.
@@ -212,6 +212,24 @@ def load_industrial(dongs):
     return out, sorted(lost)
 
 
+def load_age(dongs):
+    """Age structure per current 시군구 from raw/age.json: {sgg: {y2039, o70}} (shares of 20–39 and 70+), and the month.
+    By code, else by (시도 group, 시군구 name); a 시 row whose 구 are listed too is ignored by the code match."""
+    if not os.path.exists(os.path.join(RAW, "age.json")):
+        return {}, None
+    d = load("age.json")
+    codes = {x["sgg"] for x in dongs}
+    names = {(x["sido"], norm(x["sggnm"])): x["sgg"] for x in dongs}
+    out = {}
+    for r in d["rows"]:
+        c = r["code"][:5]
+        g = c if c in codes else names.get((SIDO_GROUP.get(c[:2], c[:2]), norm(r["sgg"])))
+        if g and r["tot"] and g not in out:
+            a = r["ages"]
+            out[g] = {"y2039": round((a["20"] + a["30"]) / r["tot"], 4), "o70": round(sum(a[str(k)] for k in (70, 80, 90, 100)) / r["tot"], 4)}
+    return out, d["ym"]
+
+
 def lh_table():
     return load("lh.json")["table"] if os.path.exists(os.path.join(RAW, "lh.json")) else None
 
@@ -400,8 +418,10 @@ def main():
     n_store, store_ok, store_ym = load_stores(tree, dongs)
     ind, ind_lost = load_industrial(dongs)
     lh, lh_n, lh_addr = load_lh(dongs)
+    age, age_ym = load_age(dongs)
     print(f"stores: {int(n_store.sum()):,} in {len(store_ok)} 시군구 ({store_ym or '-'}); 산업단지: {sum(v['n'] for v in ind.values())} in {len(ind)} 시군구, "
-          f"not mapped {', '.join(ind_lost) or '-'}; LH: {lh_addr} of {lh_n} 단지 with an address, {len(lh)} 시군구", flush=True)
+          f"not mapped {', '.join(ind_lost) or '-'}; LH: {lh_addr} of {lh_n} 단지 with an address, {len(lh)} 시군구; "
+          f"age ({age_ym or '-'}): {len(age)} 시군구", flush=True)
 
     # PM potential: mean percentile rank of PM-reachable share, population density and store density (행정동 with all three)
     has = [i for i, d in enumerate(dongs) if d["sgg"] not in stop_gap and d["sgg"] in store_ok and pop[i] is not None]
@@ -453,13 +473,13 @@ def main():
     nogo = sorted({d["sidonm"] + " " + d["sggnm"] for d in dongs if d["sgg"] not in upis})
     print(f"도시지역 ({upis_year}): {len(upis)} of {len(set(sgg_of))} 시군구; without: {', '.join(nogo) or '-'}", flush=True)
     meta = {"boundary": adm["ver"], "trips_months": tmonths, "upis_year": upis_year, "pop_ym": pop_raw["ym"], "stops_collected": sm["collected"], "route_days": rdays,
-            "n_stops": int(len(s_lon)), "n_osm_added": int(add.sum()), "n_stations": len(stations), "stores_ym": store_ym,
+            "n_stops": int(len(s_lon)), "n_osm_added": int(add.sum()), "n_stations": len(stations), "stores_ym": store_ym, "age_ym": age_ym,
             "industrial_date": next(iter(ind.values()))["date"] if ind else None, "lh_table": lh_table(),
             "bus_m": BUS_M, "rail_m": RAIL_M, "grid_m": round(PIX_M * math.cos(math.radians(36))), "good_routes": GOOD_ROUTES,
             "pm_speed": PM_SPEED_KMH, "pm_detour": PM_DETOUR, "pm5_m": PM5_M, "pm10_m": PM10_M,
             "grid_bounds": [[LON0, inv_merc_y(merc_y(LAT1))], [LON0 + np.degrees(W * PIX_M / R_EARTH), inv_merc_y(merc_y(LAT1) - H * PIX_M)]]}
     with open(os.path.join(OUT, "stats.json"), "w", encoding="utf-8") as f:
-        json.dump({"meta": meta, "cols": cols, "rows": rows, "sgg_trips": sgg_trips, "sgg_urban": upis, "sgg_industrial": ind, "sgg_lh": lh},
+        json.dump({"meta": meta, "cols": cols, "rows": rows, "sgg_trips": sgg_trips, "sgg_urban": upis, "sgg_industrial": ind, "sgg_lh": lh, "sgg_age": age},
                   f, ensure_ascii=False, separators=(",", ":"))
     feats = []
     for i, g in enumerate(geoms):

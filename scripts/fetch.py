@@ -6,6 +6,7 @@
 - stops_osm:    bus stops from OpenStreetMap (fills 시군구 missing from the 국토부 file)
 - stations_osm: railway stations and halts from OpenStreetMap (도시철도, 광역·일반철도, KTX)
 - routes:       국토교통부 정류장별 정차 노선수 (교통카드 data), one 시군구 per file under raw/routes/
+- age:          행정안전부 법정동 기준 성·연령별 주민등록 인구, summed per 시군구
 - lh:           한국토지주택공사 전국 LH아파트 단지정보 (odcloud)
 - stores:       소상공인시장진흥공단 상가(상권)정보 points per 시군구 under raw/stores/
 - trips:        국토교통부 교통수단별 이용량 and 환승 이용량 (교통카드 data, monthly), summed per 시군구 under raw/trips/
@@ -58,10 +59,11 @@ area["ISO3166-1"="KR"][admin_level=2]->.k;
 nwr["railway"~"^(station|halt)$"](area.k);
 out center tags;"""
 STORES = "https://apis.data.go.kr/B553077/api/open/sdsc2/storeListInDong"  # 소상공인시장진흥공단 상가(상권)정보
+AGE = "https://apis.data.go.kr/1741000/stdgSexdAgePpltn/selectStdgSexdAgePpltn"  # 법정동 기준 성·연령별 주민등록 인구
 LH_SPEC = "https://infuser.odcloud.kr/oas/docs?namespace=15080989/v1"  # 한국토지주택공사 전국 LH아파트 단지정보
-SOURCES = ["admin_dong", "dong_pop", "stops_molit", "stops_osm", "stations_osm", "lh", "routes", "stores", "trips"]
-OPTIONAL = {"lh", "routes", "stores", "trips"}  # the page is built without them (their figures stay empty)
-FRESH_DAYS = {"admin_dong": 7, "dong_pop": 7, "stops_molit": 30, "stops_osm": 7, "stations_osm": 7, "lh": 30}  # refetch after this many days
+SOURCES = ["admin_dong", "dong_pop", "age", "stops_molit", "stops_osm", "stations_osm", "lh", "routes", "stores", "trips"]
+OPTIONAL = {"age", "lh", "routes", "stores", "trips"}  # the page is built without them (their figures stay empty)
+FRESH_DAYS = {"admin_dong": 7, "dong_pop": 7, "stops_molit": 30, "stops_osm": 7, "stations_osm": 7, "lh": 30, "age": 7}  # refetch after this many days
 
 
 def save_json(name, data):
@@ -320,6 +322,37 @@ def fetch_routes(key):
         done += 1
     left = len(todo) - done
     print(f"routes: {day}, {len(areas)} 시군구, fetched {done} this run, {left} left", flush=True)
+
+
+def fetch_age(key):
+    """주민등록 인구 by 10-year age band per 시군구 (lv 2 rows of each 시도) for the latest published month:
+    {ym, rows: [{code, sido, sgg, tot, ages: {0: n, 10: n, …, 100: n}}]} (male and female summed)."""
+    def call(sido, ym):
+        p = {"serviceKey": key, "type": "JSON", "numOfRows": 100, "pageNo": 1, "srchFrYm": ym, "srchToYm": ym, "lv": 2, "regSeCd": 1,
+             "stdgCd": sido + "00000000"}
+        d = requests.get(AGE, params=p, timeout=60).json()["Response"]
+        if d["head"]["resultCode"] == "3":
+            return []
+        if d["head"]["resultCode"] != "0":
+            raise RuntimeError(f"{sido} {ym}: {d['head']}")
+        items = (d.get("items") or {}).get("item") or []
+        return [items] if isinstance(items, dict) else items
+    today = date.today()
+    for k in range(1, 4):
+        ym = "%d%02d" % (today.year - (today.month - k <= 0), (today.month - k - 1) % 12 + 1)
+        if call("11", ym):
+            break
+    else:
+        raise RuntimeError("no month in the last three has data")
+    rows = []
+    for sido in STCIS_SIDO:
+        for r in call(sido, ym):
+            ages = {a: int(r.get(f"male{a}AgeNmprCnt") or 0) + int(r.get(f"feml{a}AgeNmprCnt") or 0) for a in range(0, 101, 10)}
+            rows.append({"code": r["stdgCd"], "sido": r["ctpvNm"], "sgg": r["sggNm"], "tot": int(r["totNmprCnt"]), "ages": ages})
+    print(f"age: {ym}, {len(rows)} 시군구 rows, population {sum(r['tot'] for r in rows):,}", flush=True)
+    if len(rows) < 200:
+        raise RuntimeError(f"only {len(rows)} rows")
+    save_json("age.json", {"ym": ym, "rows": rows})
 
 
 def fetch_lh(key):
