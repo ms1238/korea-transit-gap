@@ -16,4 +16,5 @@ jobs:
       - run: pip install requests
       - env:
           DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
+          BIGDATA: ${{ secrets.BIGDATA }}
         run: python scripts/probe.py
