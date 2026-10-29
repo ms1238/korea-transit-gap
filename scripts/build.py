@@ -11,7 +11,8 @@
    RAIL_M of a railway station, and within BUS_M of a stop served by GOOD_ROUTES or more routes; and the PM classes of
    GRID_CLASSES (도보권, PM 5분권, PM 10분권, beyond) around PM anchors (stations, well-served stops, and every stop where
    route counts are unknown), drawn as pmgrid.png. Distances are straight lines.
-3b. PM 잠재 지수 per 행정동: mean percentile rank of the PM-reachable share, population density and 상가 density.
+3b. PM 잠재 지수 per 행정동: mean percentile rank of the PM-reachable share, population density, 상가 density and (once
+    the 행정동 age data is there) the share of residents aged 20–39.
 3c. 산업단지 (한국산업단지공단), LH 임대 세대 and age structure (20–39, 70+) per 시군구.
 4. 행정동 type from the name: 동 (urban 행정구역), 읍, 면.
 5. Monthly 교통카드 trips per 시군구 (교통수단별 이용량, 환승 이용량), as a daily average of 출발·승차 통행.
@@ -419,19 +420,27 @@ def main():
     ind, ind_lost = load_industrial(dongs)
     lh, lh_n, lh_addr = load_lh(dongs)
     age, age_ym = load_age(dongs)
+    ad = load("age_dong.json") if os.path.exists(os.path.join(RAW, "age_dong.json")) else {"ym": None, "dongs": {}}
+    dage = [ad["dongs"].get(d["code"]) for d in dongs]  # [total, 20–39, 70+]
     print(f"stores: {int(n_store.sum()):,} in {len(store_ok)} 시군구 ({store_ym or '-'}); 산업단지: {sum(v['n'] for v in ind.values())} in {len(ind)} 시군구, "
           f"not mapped {', '.join(ind_lost) or '-'}; LH: {lh_addr} of {lh_n} 단지 with an address, {len(lh)} 시군구; "
-          f"age ({age_ym or '-'}): {len(age)} 시군구", flush=True)
+          f"age ({age_ym or '-'}): {len(age)} 시군구, 행정동 {sum(x is not None for x in dage)} ({ad['ym'] or '-'})", flush=True)
 
-    # PM potential: mean percentile rank of PM-reachable share, population density and store density (행정동 with all three)
-    has = [i for i, d in enumerate(dongs) if d["sgg"] not in stop_gap and d["sgg"] in store_ok and pop[i] is not None]
+    # PM potential: mean percentile rank of PM-reachable share, population density, store density and, once the 행정동
+    # age data is there, the share of residents aged 20–39 (PM's main users)
+    use_age = sum(x is not None for x in dage) > 0.9 * len(dongs)
+    has = [i for i, d in enumerate(dongs) if d["sgg"] not in stop_gap and d["sgg"] in store_ok and pop[i] is not None
+           and (not use_age or (dage[i] and dage[i][0]))]
     pm_index = [None] * len(dongs)
     if has:
         def ranks(v):
             o = np.argsort(np.argsort(v))
             return o / max(len(v) - 1, 1)
         idx = np.array(has)
-        score = (ranks(cov[idx, 5] + cov[idx, 6]) + ranks(np.array([pop[i] for i in has]) / area[idx]) + ranks(n_store[idx] / area[idx])) / 3
+        parts = [ranks(cov[idx, 5] + cov[idx, 6]), ranks(np.array([pop[i] for i in has]) / area[idx]), ranks(n_store[idx] / area[idx])]
+        if use_age:
+            parts.append(ranks(np.array([dage[i][1] / dage[i][0] for i in has])))
+        score = sum(parts) / len(parts)
         for i, v in zip(has, score):
             pm_index[i] = round(float(v) * 100, 1)
 
@@ -446,7 +455,7 @@ def main():
             sum_rte[i] += s_rte_ok[j]
     cols = ["code", "name", "sido", "sidonm", "sgg", "sggnm", "type", "pop", "area_km2", "stops", "stops_known", "stops_few",
             "routes_sum", "bus500", "rail1k", "either", "good500", "route_ok", "osm_fill", "stop_gap",
-            "walk", "pm5", "pm10", "far", "stores", "pm_index"]
+            "walk", "pm5", "pm10", "far", "stores", "pm_index", "y2039", "o70"]
     rows = []
     for i, d in enumerate(dongs):
         ok, gap = d["sgg"] in route_ok, d["sgg"] in stop_gap
@@ -455,7 +464,8 @@ def main():
                      None if gap else round(cov[i, 0], 4), round(cov[i, 1], 4), None if gap else round(cov[i, 2], 4),
                      round(cov[i, 3], 4) if ok and not gap else None, int(ok), int(d["sgg"] in fill), int(gap)]
                     + ([None] * 4 if gap else [round(cov[i, k], 4) for k in (4, 5, 6, 7)])
-                    + [int(n_store[i]) if d["sgg"] in store_ok else None, pm_index[i]])
+                    + [int(n_store[i]) if d["sgg"] in store_ok else None, pm_index[i]]
+                    + ([round(dage[i][1] / dage[i][0], 4), round(dage[i][2] / dage[i][0], 4)] if dage[i] and dage[i][0] else [None, None]))
     a = area / 1e6
     u = np.array([dong_type(d["name"]) == "동" for d in dongs])
     print(f"coverage (area-weighted): bus {np.sum(cov[:, 0] * a) / a.sum():.1%}, rail {np.sum(cov[:, 1] * a) / a.sum():.1%}, "
@@ -473,7 +483,7 @@ def main():
     nogo = sorted({d["sidonm"] + " " + d["sggnm"] for d in dongs if d["sgg"] not in upis})
     print(f"도시지역 ({upis_year}): {len(upis)} of {len(set(sgg_of))} 시군구; without: {', '.join(nogo) or '-'}", flush=True)
     meta = {"boundary": adm["ver"], "trips_months": tmonths, "upis_year": upis_year, "pop_ym": pop_raw["ym"], "stops_collected": sm["collected"], "route_days": rdays,
-            "n_stops": int(len(s_lon)), "n_osm_added": int(add.sum()), "n_stations": len(stations), "stores_ym": store_ym, "age_ym": age_ym,
+            "n_stops": int(len(s_lon)), "n_osm_added": int(add.sum()), "n_stations": len(stations), "stores_ym": store_ym, "age_ym": age_ym, "age_dong_ym": ad["ym"], "pm_index_age": use_age,
             "industrial_date": next(iter(ind.values()))["date"] if ind else None, "lh_table": lh_table(),
             "bus_m": BUS_M, "rail_m": RAIL_M, "grid_m": round(PIX_M * math.cos(math.radians(36))), "good_routes": GOOD_ROUTES,
             "pm_speed": PM_SPEED_KMH, "pm_detour": PM_DETOUR, "pm5_m": PM5_M, "pm10_m": PM10_M,
@@ -498,7 +508,7 @@ def main():
                     "노선수확인정류장", f"노선{GOOD_ROUTES - 1}개이하정류장", "정차노선합계", f"버스{BUS_M}m권역비율",
                     f"철도{RAIL_M}m권역비율", "버스또는철도권역비율", f"노선{GOOD_ROUTES}개이상정류장{BUS_M}m권역비율",
                     "노선수자료있음", "OSM정류장보완", "정류장위치자료부족", "도보권비율", "PM5분권비율", "PM10분권비율",
-                    "PM으로도먼곳비율", "상가업소수", "PM잠재지수"])
+                    "PM으로도먼곳비율", "상가업소수", "PM잠재지수", "20~39세비중", "70세이상비중"])
         w.writerows(rows)
     for name in ("stats.json", "dongs.geojson", "stops.json", "stations.json", "pmgrid.png"):
         print(f"  {name}: {os.path.getsize(os.path.join(OUT, name)) / 1e6:.1f} MB", flush=True)

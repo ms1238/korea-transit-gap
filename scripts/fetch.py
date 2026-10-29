@@ -6,6 +6,7 @@
 - stops_osm:    bus stops from OpenStreetMap (fills 시군구 missing from the 국토부 file)
 - stations_osm: railway stations and halts from OpenStreetMap (도시철도, 광역·일반철도, KTX)
 - routes:       국토교통부 정류장별 정차 노선수 (교통카드 data), one 시군구 per file under raw/routes/
+- age_dong:     행정안전부 행정동 기준 성·연령별 주민등록 인구 (20–39 and 70+ per 행정동)
 - age:          행정안전부 법정동 기준 성·연령별 주민등록 인구, summed per 시군구
 - lh:           한국토지주택공사 전국 LH아파트 단지정보 (odcloud)
 - stores:       소상공인시장진흥공단 상가(상권)정보 points per 시군구 under raw/stores/
@@ -60,10 +61,11 @@ nwr["railway"~"^(station|halt)$"](area.k);
 out center tags;"""
 STORES = "https://apis.data.go.kr/B553077/api/open/sdsc2/storeListInDong"  # 소상공인시장진흥공단 상가(상권)정보
 AGE = "https://apis.data.go.kr/1741000/stdgSexdAgePpltn/selectStdgSexdAgePpltn"  # 법정동 기준 성·연령별 주민등록 인구
+AGE_DONG = "https://apis.data.go.kr/1741000/admmSexdAgePpltn/selectAdmmSexdAgePpltn"  # 행정동 기준 성·연령별 주민등록 인구
 LH_SPEC = "https://infuser.odcloud.kr/oas/docs?namespace=15080989/v1"  # 한국토지주택공사 전국 LH아파트 단지정보
-SOURCES = ["admin_dong", "dong_pop", "age", "stops_molit", "stops_osm", "stations_osm", "lh", "routes", "stores", "trips"]
-OPTIONAL = {"age", "lh", "routes", "stores", "trips"}  # the page is built without them (their figures stay empty)
-FRESH_DAYS = {"admin_dong": 7, "dong_pop": 7, "stops_molit": 30, "stops_osm": 7, "stations_osm": 7, "lh": 30, "age": 7}  # refetch after this many days
+SOURCES = ["admin_dong", "dong_pop", "age", "age_dong", "stops_molit", "stops_osm", "stations_osm", "lh", "routes", "stores", "trips"]
+OPTIONAL = {"age", "age_dong", "lh", "routes", "stores", "trips"}  # the page is built without them (their figures stay empty)
+FRESH_DAYS = {"admin_dong": 7, "dong_pop": 7, "stops_molit": 30, "stops_osm": 7, "stations_osm": 7, "lh": 30, "age": 7, "age_dong": 7}  # refetch after this many days
 
 
 def save_json(name, data):
@@ -353,6 +355,60 @@ def fetch_age(key):
     if len(rows) < 200:
         raise RuntimeError(f"only {len(rows)} rows")
     save_json("age.json", {"ym": ym, "rows": rows})
+
+
+def fetch_age_dong(key):
+    """주민등록 인구 by 10-year age band per 행정동 (lv 3; through the 시군구 where a 시도 code lists none) for the latest
+    month: {ym, dongs: {admmCd: [total, 20–39, 70+]}}."""
+    def call(admm, ym, lv, page=1):
+        p = {"serviceKey": key, "type": "JSON", "numOfRows": 100, "pageNo": page, "srchFrYm": ym, "srchToYm": ym, "lv": lv,
+             "regSeCd": 1, "admmCd": admm}
+        for attempt in range(4):
+            try:
+                d = requests.get(AGE_DONG, params=p, timeout=60).json()["Response"]
+                break
+            except Exception as e:  # noqa: BLE001
+                err = e
+                time.sleep(5 + attempt * 5)
+        else:
+            raise RuntimeError(f"{admm} {ym} lv{lv}: {err}")
+        if d["head"]["resultCode"] == "3":
+            return [], 0
+        if d["head"]["resultCode"] != "0":
+            raise RuntimeError(f"{admm} {ym} lv{lv}: {d['head']}")
+        items = (d.get("items") or {}).get("item") or []
+        return ([items] if isinstance(items, dict) else items), int(d["head"]["totalCount"])
+
+    def every(admm, ym, lv):
+        rows, page = [], 1
+        while True:
+            items, total = call(admm, ym, lv, page)
+            rows += items
+            if len(items) < 100 or page * 100 >= total:
+                return rows
+            page += 1
+    today = date.today()
+    for k in range(1, 4):
+        ym = "%d%02d" % (today.year - (today.month - k <= 0), (today.month - k - 1) % 12 + 1)
+        sido, _ = call("1100000000", ym, 1)
+        if sido:
+            break
+    else:
+        raise RuntimeError("no month in the last three has data")
+    n = lambda r, a: int(r.get(f"male{a}AgeNmprCnt") or 0) + int(r.get(f"feml{a}AgeNmprCnt") or 0)
+    out = {}
+    for s in sido:
+        rows = every(s["admmCd"], ym, 3)
+        if not rows:
+            for g in every(s["admmCd"], ym, 2):
+                rows += every(g["admmCd"], ym, 3)
+        for r in rows:
+            if r.get("dongNm"):
+                out[r["admmCd"]] = [int(r["totNmprCnt"]), n(r, 20) + n(r, 30), sum(n(r, a) for a in (70, 80, 90, 100))]
+    print(f"age_dong: {ym}, {len(out)} 행정동", flush=True)
+    if len(out) < 3000:
+        raise RuntimeError(f"only {len(out)} 행정동")
+    save_json("age_dong.json", {"ym": ym, "dongs": out})
 
 
 def fetch_lh(key):

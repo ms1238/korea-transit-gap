@@ -20,7 +20,7 @@ const METRICS = [
   { id: 'pm', name: 'PM 10분 안에 새로 닿는 면적 비율', good: 1, v: x => x.pmArea ? (x.pm5 + x.pm10) / x.pmArea : null,
     note: m => `걸어서는 버스 정류장(노선 ${m.good_routes}개 이상, 노선 수를 모르는 곳은 모든 정류장) ${m.bus_m}m·철도역 ${m.rail_m / 1000}km 밖이지만, PM으로 10분(평균 ${m.pm_speed}km/h, 도로 우회 ${m.pm_detour}배 가정 → 직선 ${(m.pm10_m / 1000).toFixed(1)}km) 안에 그 정류장·역에 닿는 면적의 비율입니다. 높을수록 PM이 첫·마지막 구간을 메울 여지가 큽니다. 면적 기준입니다.` },
   { id: 'pmidx', name: 'PM 잠재 지수', good: 1, idx: 1, v: x => x.idxW ? x.idx / x.idxW / 100 : null,
-    note: () => 'PM 10분 안에 새로 닿는 면적 비율, 인구 밀도, 상가 밀도를 전국 행정동 순위(0~1)로 바꿔 평균한 값(0~100)입니다. 높을수록 PM 연계 수요가 클 곳입니다. 시군구·시도는 인구 가중 평균이며, 상가 자료가 아직 없는 시군구는 비어 있습니다.' },
+    note: m => `PM 10분 안에 새로 닿는 면적 비율, 인구 밀도, 상가 밀도${m.pm_index_age ? ', 20~39세 주민 비중' : ''}을 전국 행정동 순위(0~1)로 바꿔 평균한 값(0~100)입니다. 높을수록 PM 연계 수요가 클 곳입니다. 시군구·시도는 인구 가중 평균이며, 상가 자료가 아직 없는 시군구는 비어 있습니다.` },
   { id: 'rail', name: '철도역 1km 밖 면적 비율', v: x => x.area ? 1 - x.rail / x.area : null,
     note: m => `도시철도·광역철도·일반철도·KTX 역에서 직선거리 ${m.rail_m / 1000}km가 넘는 면적의 비율입니다.` },
 ];
@@ -128,7 +128,7 @@ function dongPopup(r) {
   const line = (k, v) => `<tr><td>${k}</td><td style="text-align:right">${v}</td></tr>`;
   return `<b>${esc(r[C.sidonm])} ${esc(r[C.sggnm])} ${esc(r[C.name])}</b> <small>(${r[C.type]})</small><table>` +
     line('주민등록인구', fmt(r[C.pop])) + line('면적', r[C.area_km2].toFixed(2) + '㎢') + line('버스 정류장', fmt(r[C.stops]) + '곳') +
-    METRICS.map(m => line(m.name, mfmt(m, m.v(x)))).join('') + (r[C.stores] != null ? line('상가업소', fmt(r[C.stores]) + '곳') : '') + (U[r[C.sgg]] ? line(`법정 도시지역 면적 (${U[r[C.sgg]].city ? esc(U[r[C.sgg]].city) + ' 전체' : '시군구'})`, pct(U[r[C.sgg]].area)) : '') + (() => { const t = trips(r[C.sgg]); return t.trip == null ? '' :
+    METRICS.map(m => line(m.name, mfmt(m, m.v(x)))).join('') + (r[C.stores] != null ? line('상가업소', fmt(r[C.stores]) + '곳') : '') + (r[C.y2039] != null ? line('20~39세 / 70세 이상', pct(r[C.y2039]) + ' / ' + pct(r[C.o70])) : '') + (U[r[C.sgg]] ? line(`법정 도시지역 면적 (${U[r[C.sgg]].city ? esc(U[r[C.sgg]].city) + ' 전체' : '시군구'})`, pct(U[r[C.sgg]].area)) : '') + (() => { const t = trips(r[C.sgg]); return t.trip == null ? '' :
       line('주민 1인당 하루 승차 (시군구)', t.trip.toFixed(2)) + line('환승 통행 비중 (시군구)', pct(t.transfer)); })() + '</table>' +
     (r[C.stop_gap] ? '<small>이 시군구는 국토부 파일과 OpenStreetMap 모두 정류장이 크게 부족해 버스 지표를 비워 두었습니다.</small><br>' : '') +
     (r[C.osm_fill] ? '<small>이 시군구는 국토부 정류장 파일에 거의 없어 OpenStreetMap 정류장으로 보완했습니다.</small><br>' : '') +
@@ -303,14 +303,15 @@ function renderDongs(rows, m) {
   const pick = pickSgg ? rows.filter(r => r[C.sgg] === pickSgg) : rows;
   const label = pickSgg ? `${pick[0]?.[C.sidonm] ?? ''} ${pick[0]?.[C.sggnm] ?? ''}` : (st.sido ? rows[0]?.[C.sidonm] : '전국');
   $('dong-title').textContent = `행정동 · ${label}${pickSgg ? '' : ' (상위 500곳)'}`;
-  const data = pick.map(r => { const x = agg([r]); return { code: r[C.code], name: r[C.name], sgg: `${r[C.sidonm]} ${r[C.sggnm]}`, type: r[C.type], pop: r[C.pop], area: r[C.area_km2], stops: r[C.stops], v: m.v(x), either: METRICS[0].v(x), few: METRICS[3].v(x), pm: METRICS.find(q => q.id === 'pm').v(x), stores: r[C.stores], pmidx: r[C.pm_index], i: D.indexOf(r) }; });
+  const data = pick.map(r => { const x = agg([r]); return { code: r[C.code], name: r[C.name], sgg: `${r[C.sidonm]} ${r[C.sggnm]}`, type: r[C.type], pop: r[C.pop], area: r[C.area_km2], stops: r[C.stops], v: m.v(x), either: METRICS[0].v(x), few: METRICS[3].v(x), pm: METRICS.find(q => q.id === 'pm').v(x), stores: r[C.stores], pmidx: r[C.pm_index], y2039: r[C.y2039], o70: r[C.o70], i: D.indexOf(r) }; });
   const cols = [{ k: 'name', h: '행정동', l: 1, f: esc }, { k: 'sgg', h: '시군구', l: 1, f: esc }, { k: 'type', h: '구분', l: 1 }, { k: 'v', h: m.name, f: v => mfmt(m, v) },
     { k: 'pop', h: '인구', f: fmt }, { k: 'area', h: '면적(㎢)', f: v => v.toFixed(2) }, { k: 'stops', h: '정류장', f: fmt }, { k: 'either', h: '버스·철도 도보권 밖', f: pct }, { k: 'few', h: '노선 2개 이하 정류장', f: pct },
-    { k: 'pm', h: 'PM 10분 새로 닿는 면적', f: pct }, { k: 'stores', h: '상가업소', f: fmt }, { k: 'pmidx', h: 'PM 잠재 지수', f: v => v == null ? '-' : v.toFixed(1) }];
+    { k: 'pm', h: 'PM 10분 새로 닿는 면적', f: pct }, { k: 'stores', h: '상가업소', f: fmt }, { k: 'pmidx', h: 'PM 잠재 지수', f: v => v == null ? '-' : v.toFixed(1) },
+    { k: 'y2039', h: '20~39세', f: pct }, { k: 'o70', h: '70세 이상', f: pct }];
   dongShown = table($('dong-table'), cols, data, sortDong, k => { sortDong = { k, asc: sortDong.k === k ? !sortDong.asc : ['name', 'sgg', 'type'].includes(k) }; renderDongs(D.filter(visible), metric()); },
     r => { zoomTo([D[r.i]]); window.scrollTo({ top: $('map').offsetTop - 10, behavior: 'smooth' }); });
-  $('dong-csv').onclick = () => csv(`행정동_${st.metric}.csv`, ['행정동코드', '행정동', '시군구', '구분', m.name, '인구', '면적_km2', '정류장', '버스철도도보권밖', '노선2개이하정류장비율', 'PM10분새로닿는면적비율', '상가업소', 'PM잠재지수'],
-    dongShown.map(r => [r.code, r.name, r.sgg, r.type, r.v, r.pop, r.area, r.stops, r.either, r.few, r.pm, r.stores, r.pmidx]));
+  $('dong-csv').onclick = () => csv(`행정동_${st.metric}.csv`, ['행정동코드', '행정동', '시군구', '구분', m.name, '인구', '면적_km2', '정류장', '버스철도도보권밖', '노선2개이하정류장비율', 'PM10분새로닿는면적비율', '상가업소', 'PM잠재지수', '20~39세비중', '70세이상비중'],
+    dongShown.map(r => [r.code, r.name, r.sgg, r.type, r.v, r.pop, r.area, r.stops, r.either, r.few, r.pm, r.stores, r.pmidx, r.y2039, r.o70]));
 }
 
 function csv(name, head, rows) {
