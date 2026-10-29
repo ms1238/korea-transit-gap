@@ -365,8 +365,13 @@ def fetch_age_dong(key):
              "regSeCd": 1, "admmCd": admm}
         for attempt in range(4):
             try:
-                d = requests.get(AGE_DONG, params=p, timeout=60).json()["Response"]
+                d = requests.get(AGE_DONG, params=p, timeout=60).json()
+                if "Response" not in d:  # e.g. an unregistered key: the gateway's own error, not worth retrying
+                    raise RuntimeError(f"{admm} {ym} lv{lv}: {str(d)[:200]}")
+                d = d["Response"]
                 break
+            except RuntimeError:
+                raise
             except Exception as e:  # noqa: BLE001
                 err = e
                 time.sleep(5 + attempt * 5)
