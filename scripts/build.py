@@ -8,14 +8,18 @@
    ROUTE_MATCH_MIN gets no route figures. A non-dense 시군구 with fewer than GAP_STOPS_PER_1000 stops per 1,000 people
    lacks stop data in both sources (e.g. 화천, 속초) and gets no bus figures instead of a false gap.
 3. Coverage per 행정동 on a Web Mercator pixel grid (~170 m): the share of its area within BUS_M of a bus stop, within
-   RAIL_M of a railway station, and within BUS_M of a stop served by GOOD_ROUTES or more routes; and the PM classes of
-   GRID_CLASSES (도보권, PM 5분권, PM 10분권, beyond) around PM anchors (stations, well-served stops, and every stop where
-   route counts are unknown), drawn as pmgrid.png. Distances are straight lines.
-3b. PM 잠재 지수 per 행정동: mean percentile rank of the PM-reachable share, population density, 상가 density and (once
-    the 행정동 age data is there) the share of residents aged 20–39.
+   RAIL_M of a railway station, and within BUS_M of a well-served stop (GOOD_ROUTES or more routes, or routes unknown:
+   a stop whose name matched no 정차 노선수 entry gets the benefit of the doubt rather than counting as sparse); and the
+   PM classes of GRID_CLASSES (도보권, PM 5분권, PM 10분권, beyond) around PM anchors (stations and well-served stops),
+   drawn as pmgrid.png. Distances are straight lines.
+3b. PM 잠재 지수 per 행정동: geometric mean of the percentile ranks of the PM-reachable share, population density,
+    상가 density and (once the 행정동 age data is there) the share of residents aged 20–39. A 행정동 whose PM-reachable
+    share is under PM_INDEX_MIN scores 0: density alone (central Seoul, all within walking distance) is no PM gap.
 3c. 산업단지 (한국산업단지공단), LH 임대 세대 and age structure (20–39, 70+) per 시군구.
 4. 행정동 type from the name: 동 (urban 행정구역), 읍, 면.
-5. Monthly 교통카드 trips per 시군구 (교통수단별 이용량, 환승 이용량), as a daily average of 출발·승차 통행.
+5. Monthly 교통카드 trips per 시군구 (교통수단별 이용량, 환승 이용량), as a daily average of 출발·승차 통행. Under
+   TRIPS_MIN trips per resident a day the card data barely covers the 시군구 (e.g. 곡성·음성·청송, a few dozen trips a
+   day; all of them lack stop-level route counts too), so it is flagged sparse instead of read as no riders.
 6. 법정 도시지역 (국토계획법 용도지역) area and population shares per 시군구 from the 도시계획현황 statistics.
 
 Outputs (site/data): dongs.geojson (simplified boundaries), stats.json (one row per 행정동 + metadata), stops.json,
@@ -34,6 +38,7 @@ import numpy as np
 import shapely
 from PIL import Image
 from scipy.spatial import cKDTree
+from scipy.stats import rankdata
 
 RAW = os.path.join(os.path.dirname(__file__), "..", "raw")
 OUT = os.path.join(os.path.dirname(__file__), "..", "site", "data")
@@ -47,6 +52,8 @@ SIMPLIFY_DEG = 0.0004  # ~40 m
 # PM first/last mile (Geurs & van Wee's contour measure): reach within 5 and 10 minutes of riding, as straight lines
 PM_SPEED_KMH, PM_DETOUR = 15, 1.3  # assumed average riding speed and road distance / straight distance
 PM5_M, PM10_M = (round(PM_SPEED_KMH * 1000 / 60 * m / PM_DETOUR) for m in (5, 10))
+PM_INDEX_MIN = 0.10  # PM 10분권 share under which a 행정동's PM 잠재 지수 is 0
+TRIPS_MIN = 0.02  # 교통카드 trips per resident a day under which a 시군구's card data counts as sparse
 # Web Mercator pixel grid over South Korea (under 4096 px a side, the usual WebGL texture limit); ~170 m at 36°N
 LON0, LON1, LAT0, LAT1, PIX_M, R_EARTH = 124.5, 132.0, 33.0, 38.7, 210, 6378137.0
 GRID_CLASSES = {1: ("도보권", None), 2: ("PM 5분권", (235, 104, 52, 210)), 3: ("PM 10분권", (246, 179, 143, 190)),
@@ -380,11 +387,11 @@ def main():
     # 3. coverage on a Web Mercator pixel grid, which is also the PM grid image
     rail_xy = proj([s[0] for s in stations], [s[1] for s in stations])
     bus_t, rail_t = cKDTree(proj(s_lon, s_lat)), cKDTree(rail_xy)
-    good = s_rte_ok >= GOOD_ROUTES
-    good_t = cKDTree(proj(s_lon[good], s_lat[good])) if good.any() else None
-    # PM anchors: stations, stops with GOOD_ROUTES+ routes, and every stop where route counts are unknown
-    anchor = good | ~np.isin(sgg_of[s_dong], list(route_ok))
-    anchor_t = cKDTree(proj(s_lon[anchor], s_lat[anchor]))
+    # well-served stops, also the PM anchors (with stations): GOOD_ROUTES+ routes, or route count unknown (a 시군구 without
+    # route figures, or a stop whose name matched none: counting those as sparse would rank low-match 시군구 as gaps)
+    good = (s_rte_ok >= GOOD_ROUTES) | (s_rte_ok < 0)
+    good_t = cKDTree(proj(s_lon[good], s_lat[good]))
+    print(f"well-served stops: {good.sum()} ({np.sum(s_rte_ok >= GOOD_ROUTES)} with {GOOD_ROUTES}+ routes, {np.sum(s_rte_ok < 0)} unknown)", flush=True)
     W, H = math.ceil((merc_x(LON1) - merc_x(LON0)) / PIX_M), math.ceil((merc_y(LAT1) - merc_y(LAT0)) / PIX_M)
     img = np.zeros((H, W), np.uint8)  # GRID_CLASSES
     cov = np.zeros((len(dongs), 8))  # bus, rail, either, well-served bus, walk, PM 5 min, PM 10 min, beyond
@@ -403,8 +410,8 @@ def main():
             pts, rr, cc = proj([p.x], [p.y]), None, None
         b = bus_t.query(pts, distance_upper_bound=BUS_M)[0] <= BUS_M
         dr = rail_t.query(pts, distance_upper_bound=PM10_M)[0]
-        w = good_t.query(pts, distance_upper_bound=BUS_M)[0] <= BUS_M if good_t else np.zeros(len(pts), bool)
-        da = anchor_t.query(pts, distance_upper_bound=PM10_M)[0]
+        da = good_t.query(pts, distance_upper_bound=PM10_M)[0]
+        w = da <= BUS_M
         walk = (da <= BUS_M) | (dr <= RAIL_M)
         near = np.minimum(da, dr)
         cls = np.where(walk, 1, np.where(near <= PM5_M, 2, np.where(near <= PM10_M, 3, 4)))
@@ -426,23 +433,28 @@ def main():
           f"not mapped {', '.join(ind_lost) or '-'}; LH: {lh_addr} of {lh_n} 단지 with an address, {len(lh)} 시군구; "
           f"age ({age_ym or '-'}): {len(age)} 시군구, 행정동 {sum(x is not None for x in dage)} ({ad['ym'] or '-'})", flush=True)
 
-    # PM potential: mean percentile rank of PM-reachable share, population density, store density and, once the 행정동
-    # age data is there, the share of residents aged 20–39 (PM's main users)
+    # PM potential: geometric mean of the percentile ranks of PM-reachable share, population density, store density and,
+    # once the 행정동 age data is there, the share of residents aged 20–39 (PM's main users). An arithmetic mean let density
+    # carry 행정동 with no PM gap at all to the top (central Seoul); the geometric mean needs every part, and a PM share
+    # under PM_INDEX_MIN scores 0.
     use_age = sum(x is not None for x in dage) > 0.9 * len(dongs)
     has = [i for i, d in enumerate(dongs) if d["sgg"] not in stop_gap and d["sgg"] in store_ok and pop[i] is not None
            and (not use_age or (dage[i] and dage[i][0]))]
     pm_index = [None] * len(dongs)
     if has:
-        def ranks(v):
-            o = np.argsort(np.argsort(v))
-            return o / max(len(v) - 1, 1)
+        def ranks(v):  # percentile rank in (0, 1), ties share their mean rank
+            return (rankdata(v) - 0.5) / len(v)
         idx = np.array(has)
-        parts = [ranks(cov[idx, 5] + cov[idx, 6]), ranks(np.array([pop[i] for i in has]) / area[idx]), ranks(n_store[idx] / area[idx])]
+        pmv = cov[idx, 5] + cov[idx, 6]
+        ok = pmv >= PM_INDEX_MIN
+        parts = [np.zeros(len(idx)), ranks(np.array([pop[i] for i in has]) / area[idx]), ranks(n_store[idx] / area[idx])]
+        parts[0][ok] = ranks(pmv[ok])  # among the 행정동 with a PM gap
         if use_age:
             parts.append(ranks(np.array([dage[i][1] / dage[i][0] for i in has])))
-        score = sum(parts) / len(parts)
+        score = np.prod(parts, axis=0) ** (1 / len(parts))
         for i, v in zip(has, score):
             pm_index[i] = round(float(v) * 100, 1)
+        print(f"PM index: {len(has)} 행정동, {int(ok.sum())} with PM 10분권 ≥ {PM_INDEX_MIN:.0%}, the rest 0", flush=True)
 
     # per 행정동
     n_stop, n_known, n_few, sum_rte = (np.zeros(len(dongs)) for _ in range(4))
@@ -477,8 +489,12 @@ def main():
           f"{sum('transfer' in v for v in trips.values())} with 환승; not mapped: {', '.join(tlost) or '-'}", flush=True)
     sgg_trips = {g: {"day": round(v["modes"]["day"], 1), "modes": {m: round(x, 1) for m, x in v["modes"]["by_mode"].items()},
                      "users": {u: round(x, 1) for u, x in v["modes"]["by_user"].items()},
-                     "transfer": round(v["transfer"]["day"], 1) if "transfer" in v else None}
+                     "transfer": round(v["transfer"]["day"], 1) if "transfer" in v else None,
+                     "sparse": not g_pop[g] or v["modes"]["day"] / g_pop[g] < TRIPS_MIN}
                  for g, v in trips.items() if "modes" in v}
+    name_of = lambda g: dongs[np.where(sgg_of == g)[0][0]]["sggnm"]
+    print(f"trips sparse (< {TRIPS_MIN} a resident a day): " + ", ".join(sorted(name_of(g) for g, v in sgg_trips.items() if v["sparse"]))
+          + "; none: " + (", ".join(sorted(name_of(g) for g in set(sgg_of) if g not in sgg_trips)) or "-"), flush=True)
     upis, upis_year = load_upis(dongs)
     nogo = sorted({d["sidonm"] + " " + d["sggnm"] for d in dongs if d["sgg"] not in upis})
     print(f"도시지역 ({upis_year}): {len(upis)} of {len(set(sgg_of))} 시군구; without: {', '.join(nogo) or '-'}", flush=True)
@@ -486,7 +502,7 @@ def main():
             "n_stops": int(len(s_lon)), "n_osm_added": int(add.sum()), "n_stations": len(stations), "stores_ym": store_ym, "age_ym": age_ym, "age_dong_ym": ad["ym"], "pm_index_age": use_age,
             "industrial_date": next(iter(ind.values()))["date"] if ind else None, "lh_table": lh_table(),
             "bus_m": BUS_M, "rail_m": RAIL_M, "grid_m": round(PIX_M * math.cos(math.radians(36))), "good_routes": GOOD_ROUTES,
-            "pm_speed": PM_SPEED_KMH, "pm_detour": PM_DETOUR, "pm5_m": PM5_M, "pm10_m": PM10_M,
+            "pm_speed": PM_SPEED_KMH, "pm_detour": PM_DETOUR, "pm5_m": PM5_M, "pm10_m": PM10_M, "pm_index_min": PM_INDEX_MIN, "trips_min": TRIPS_MIN,
             "grid_bounds": [[LON0, inv_merc_y(merc_y(LAT1))], [LON0 + np.degrees(W * PIX_M / R_EARTH), inv_merc_y(merc_y(LAT1) - H * PIX_M)]]}
     with open(os.path.join(OUT, "stats.json"), "w", encoding="utf-8") as f:
         json.dump({"meta": meta, "cols": cols, "rows": rows, "sgg_trips": sgg_trips, "sgg_urban": upis, "sgg_industrial": ind, "sgg_lh": lh, "sgg_age": age},

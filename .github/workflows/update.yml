@@ -9,7 +9,7 @@ on:
     paths: ["site/**", "scripts/**", ".github/workflows/update.yml", "requirements.txt"]
 
 permissions:
-  contents: write  # temporary: the dev-raw branch
+  contents: read
   pages: write
   id-token: write
 
@@ -48,17 +48,6 @@ jobs:
         with:
           path: raw
           key: raw-${{ github.run_id }}
-      # temporary, for development: a copy of raw/ readable from outside Actions
-      - name: Copy raw data to the dev-raw branch
-        run: |
-          tar czf /tmp/raw.tgz raw
-          split -b 40m /tmp/raw.tgz /tmp/raw.tgz.
-          git switch --orphan dev-raw-new
-          cp /tmp/raw.tgz.* .
-          git add raw.tgz.*
-          git -c user.name="github-actions" -c user.email="github-actions@users.noreply.github.com" commit -qm "raw data $(date -u +%F)"
-          git push -f origin dev-raw-new:dev-raw
-          git switch -f main
       - name: Build dashboard data
         if: hashFiles('scripts/build.py') != ''
         run: python scripts/build.py
