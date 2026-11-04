@@ -12,6 +12,10 @@
 - stores:       소상공인시장진흥공단 상가(상권)정보 points per 시군구 under raw/stores/
 - trips:        국토교통부 교통수단별 이용량 and 환승 이용량 (교통카드 data, monthly), summed per 시군구 under raw/trips/
                 These APIs are slow, so each run fetches what fits in API_BUDGET_MIN and later runs continue.
+- terrain:      elevation (Mapzen Terrain Tiles on AWS Open Data, terrarium PNG, zoom TERRAIN_Z ≈ 60 m; mostly SRTM in
+                Korea, a surface model that includes buildings), one Web Mercator mosaic in terrain.npz
+- landcover:    ESA WorldCover 2021 v200 (10 m land cover, CC BY 4.0, AWS Open Data), read from its overviews at
+                1/LANDCOVER_PER_DEG degree (≈ 70 m) into landcover.npz
 
 `--only-missing` fetches only sources that have no file in raw/ yet (code pushes reuse the cached data);
 routes, stores and trips always continue within their budget.
@@ -29,6 +33,7 @@ import sys
 import time
 from datetime import date, timedelta
 
+import numpy as np
 import requests
 
 RAW = os.path.join(os.path.dirname(__file__), "..", "raw")
@@ -63,9 +68,17 @@ STORES = "https://apis.data.go.kr/B553077/api/open/sdsc2/storeListInDong"  # 소
 AGE = "https://apis.data.go.kr/1741000/stdgSexdAgePpltn/selectStdgSexdAgePpltn"  # 법정동 기준 성·연령별 주민등록 인구
 AGE_DONG = "https://apis.data.go.kr/1741000/admmSexdAgePpltn/selectAdmmSexdAgePpltn"  # 행정동 기준 성·연령별 주민등록 인구
 LH_SPEC = "https://infuser.odcloud.kr/oas/docs?namespace=15080989/v1"  # 한국토지주택공사 전국 LH아파트 단지정보
-SOURCES = ["admin_dong", "dong_pop", "age", "age_dong", "stops_molit", "stops_osm", "stations_osm", "lh", "routes", "stores", "trips"]
-OPTIONAL = {"age", "age_dong", "lh", "routes", "stores", "trips"}  # the page is built without them (their figures stay empty)
-FRESH_DAYS = {"admin_dong": 7, "dong_pop": 7, "stops_molit": 30, "stops_osm": 7, "stations_osm": 7, "lh": 30, "age": 7, "age_dong": 7}  # refetch after this many days
+SOURCES = ["admin_dong", "dong_pop", "age", "age_dong", "stops_molit", "stops_osm", "stations_osm", "lh", "terrain", "landcover",
+           "routes", "stores", "trips"]
+OPTIONAL = {"age", "age_dong", "lh", "routes", "stores", "trips", "terrain", "landcover"}  # the page is built without them (their figures stay empty)
+FRESH_DAYS = {"admin_dong": 7, "dong_pop": 7, "stops_molit": 30, "stops_osm": 7, "stations_osm": 7, "lh": 30, "age": 7, "age_dong": 7,
+              "terrain": 365, "landcover": 365}  # refetch after this many days
+FILES = {"routes": "routes", "trips": "trips", "stores": "stores", "terrain": "terrain.npz", "landcover": "landcover.npz"}  # else <name>.json
+BBOX = (124.5, 33.0, 132.0, 38.7)  # lon0, lat0, lon1, lat1, as in build.py
+TERRAIN = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
+TERRAIN_Z = 11
+WORLDCOVER = "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_{tile}_Map.tif"
+LANDCOVER_PER_DEG = 1500  # the files are 12000 px a degree with overviews at 2, 4, 8, …: read the 8× one
 
 
 def save_json(name, data):
@@ -94,6 +107,75 @@ def overpass(query):
                 print(f"  overpass {url} try {attempt + 1}: {e}", flush=True)
                 time.sleep(10)
     raise RuntimeError("all Overpass mirrors failed")
+
+
+def save_npz(name, **arrays):
+    path = os.path.join(RAW, name)
+    with open(path + ".tmp", "wb") as f:
+        np.savez_compressed(f, **arrays)
+    os.replace(path + ".tmp", path)
+
+
+def fetch_terrain(_key):
+    """Elevation over BBOX as one Web Mercator mosaic of terrarium tiles at TERRAIN_Z, in decimetres (int16; sea floor
+    below -3,276 m is clipped). x0 and y0 are the tile numbers of the top-left tile."""
+    from concurrent.futures import ThreadPoolExecutor
+    from PIL import Image
+    n = 2 ** TERRAIN_Z
+    tx = lambda lon: int((lon + 180) / 360 * n)
+    ty = lambda lat: int((1 - math.asinh(math.tan(math.radians(lat))) / math.pi) / 2 * n)
+    x0, x1, y0, y1 = tx(BBOX[0]), tx(BBOX[2]), ty(BBOX[3]), ty(BBOX[1])
+    dem = np.zeros(((y1 - y0 + 1) * 256, (x1 - x0 + 1) * 256), np.int16)
+
+    def one(xy):
+        x, y = xy
+        for attempt in range(4):
+            try:
+                r = requests.get(TERRAIN.format(z=TERRAIN_Z, x=x, y=y), timeout=60, headers=UA)
+                r.raise_for_status()
+                a = np.asarray(Image.open(io.BytesIO(r.content)).convert("RGB"), np.float64)
+                h = a[..., 0] * 256 + a[..., 1] + a[..., 2] / 256 - 32768
+                dem[(y - y0) * 256:(y - y0 + 1) * 256, (x - x0) * 256:(x - x0 + 1) * 256] = np.clip(np.round(h * 10), -32767, 32767)
+                return
+            except Exception as e:  # noqa: BLE001
+                if attempt == 3:
+                    raise RuntimeError(f"tile {x}/{y}: {e}") from e
+                time.sleep(2 ** attempt)
+
+    with ThreadPoolExecutor(16) as ex:
+        list(ex.map(one, [(x, y) for y in range(y0, y1 + 1) for x in range(x0, x1 + 1)]))
+    save_npz("terrain.npz", dem=dem, z=TERRAIN_Z, x0=x0, y0=y0)
+    print(f"terrain: z{TERRAIN_Z}, {(x1 - x0 + 1) * (y1 - y0 + 1)} tiles, {dem.shape[1]} x {dem.shape[0]} px, "
+          f"{dem.min() / 10:.0f} to {dem.max() / 10:.0f} m", flush=True)
+
+
+def fetch_landcover(_key):
+    """ESA WorldCover classes over the 3° tiles that cover BBOX, at 1/LANDCOVER_PER_DEG degree (the files' 8× overview);
+    lon0 and lat1 are the west and north edges. A tile that does not exist (open sea) stays 0 (no data)."""
+    import rasterio
+    lon0, lat0 = math.floor(BBOX[0] / 3) * 3, math.floor(BBOX[1] / 3) * 3
+    lon1, lat1 = math.ceil(BBOX[2] / 3) * 3, math.ceil(BBOX[3] / 3) * 3
+    k = 3 * LANDCOVER_PER_DEG
+    lc = np.zeros(((lat1 - lat0) // 3 * k, (lon1 - lon0) // 3 * k), np.uint8)
+    got = []
+    for la in range(lat0, lat1, 3):
+        for lo in range(lon0, lon1, 3):
+            tile = f"N{la:02d}E{lo:03d}"
+            try:
+                with rasterio.open("/vsicurl/" + WORLDCOVER.format(tile=tile)) as src:
+                    a = src.read(1, out_shape=(k, k))
+            except rasterio.errors.RasterioIOError as e:
+                print(f"  landcover {tile}: not read ({e})", flush=True)
+                continue
+            r = (lat1 - la - 3) // 3 * k
+            c = (lo - lon0) // 3 * k
+            lc[r:r + k, c:c + k] = a
+            got.append(tile)
+    if not got:
+        raise RuntimeError("no WorldCover tile read")
+    save_npz("landcover.npz", lc=lc, lon0=lon0, lat1=lat1, per_deg=LANDCOVER_PER_DEG)
+    cls, cnt = np.unique(lc, return_counts=True)
+    print(f"landcover: {', '.join(got)}; classes " + ", ".join(f"{c}:{n / lc.size:.1%}" for c, n in zip(cls, cnt)), flush=True)
 
 
 def fetch_admin_dong(_key):
@@ -537,7 +619,7 @@ def main():
     names = [a for a in sys.argv[1:] if not a.startswith("--")] or SOURCES
     failed = []
     for name in names:
-        path = os.path.join(RAW, name if name in ("routes", "trips", "stores") else name + ".json")
+        path = os.path.join(RAW, FILES.get(name, name + ".json"))
         have = os.path.exists(path)
         if have and name in FRESH_DAYS and (only_missing or time.time() - os.path.getmtime(path) < FRESH_DAYS[name] * 86400):
             continue
