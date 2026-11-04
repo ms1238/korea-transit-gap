@@ -1,4 +1,7 @@
 'use strict';
+// cache-busting: the deploy stamps this script's URL with ?v=<commit>; the data files get the same stamp
+const DV = (document.currentScript?.src.match(/[?&]v=([\w-]+)/) || [])[1];
+const dv = u => DV ? `${u}?v=${DV}` : u;
 // PM 교통사고 합성데이터 (도로교통공단): one compact row per synthetic record, units of current 시군구 (see build.py).
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -23,7 +26,7 @@ const st = { metric: 'n', sido: '', unit: '' };
 let unitOf = {};  // dong index → unit index
 
 async function main() {
-  const [acc, stats, geo] = await Promise.all(['data/accidents.json', 'data/stats.json', 'data/dongs.geojson'].map(u => fetch(u).then(r => r.json())));
+  const [acc, stats, geo] = await Promise.all(['data/accidents.json', 'data/stats.json', 'data/dongs.geojson'].map(u => fetch(dv(u)).then(r => r.json())));
   A = acc; U = acc.units; D = stats.rows; GEO = geo;
   C = Object.fromEntries(acc.cols.map((c, i) => [c, i]));
   const SC = SCI = Object.fromEntries(stats.cols.map((c, i) => [c, i]));

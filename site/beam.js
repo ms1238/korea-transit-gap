@@ -2,9 +2,10 @@
 // 빔모빌리티 운영지역 (scripts/static/beam_areas.csv → data/beam.geojson, one outline per 시군구): 직영 and 프랜차이즈
 // in two colours, a checkbox #show-beam on every page. Beam.kind(sgg) → '직영' | '프랜차이즈' | undefined.
 const Beam = (() => {
+  const V = (document.currentScript?.src.match(/[?&]v=([\w-]+)/) || [])[1];
   const COL = { '직영': '#1d4ed8', '프랜차이즈': '#0d9488' };
   let data = null, kinds = {};
-  const ready = fetch('data/beam.geojson').then(r => r.ok ? r.json() : null).then(d => {
+  const ready = fetch('data/beam.geojson' + (V ? '?v=' + V : '')).then(r => r.ok ? r.json() : null).then(d => {
     data = d;
     for (const f of d?.features || []) kinds[f.properties.sgg] = f.properties.kind;
   }).catch(() => {});
