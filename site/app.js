@@ -5,6 +5,9 @@ const fmt = n => n == null ? '-' : Math.round(n).toLocaleString('ko-KR');
 const pct = v => v == null ? '-' : (v * 100).toFixed(1) + '%';
 const RAMP = ['#cde2fb', '#86b6ef', '#3987e5', '#1c5cab', '#0d366b'];  // sequential blue, light → dark = larger gap
 const NODATA = '#d6d5d0';
+// Elevation: Mapzen Terrain Tiles on AWS Open Data (terrarium encoding, public, CORS open, no key)
+const DEM = { type: 'raster-dem', tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'], encoding: 'terrarium', tileSize: 256, maxzoom: 14,
+  attribution: '<a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md" target="_blank">지형: Mapzen Terrain Tiles</a>' };
 
 // Every metric is a gap share (higher = worse) so the map always reads "darker = less served".
 // v(x) takes an aggregate {area, pop, stops, known, few, bus, rail, either, good, goodArea} and returns 0..1 or null.
@@ -79,7 +82,7 @@ async function main() {
 function initMap(geo) {
   if (typeof maplibregl === 'undefined') { $('map').innerHTML = '<p class="note" style="padding:16px">지도 라이브러리를 불러오지 못했습니다. 새로고침해 주세요.</p>'; return; }
   map = new maplibregl.Map({ container: 'map', style: 'https://tiles.openfreemap.org/styles/positron', center: [127.8, 36.2], zoom: 6, attributionControl: { compact: true } });
-  map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+  map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'top-right');
   map.on('load', async () => {
     map.addSource('dongs', { type: 'geojson', data: geo });
     const before = map.getStyle().layers.find(l => l.type === 'symbol')?.id;
@@ -87,6 +90,29 @@ function initMap(geo) {
       'fill-color': ['match', ['coalesce', ['feature-state', 'c'], -1], 0, RAMP[0], 1, RAMP[1], 2, RAMP[2], 3, RAMP[3], 4, RAMP[4], NODATA],
       'fill-opacity': ['case', ['boolean', ['feature-state', 'hide'], false], 0.08, 0.72] } }, before);
     map.addLayer({ id: 'dong-line', type: 'line', source: 'dongs', minzoom: 8, paint: { 'line-color': '#ffffff', 'line-width': 0.5, 'line-opacity': 0.7 } }, before);
+    // terrain: shaded relief over the metric colours (so slopes show through them), and an optional 3D view.
+    // MapLibre wants separate DEM sources for hillshade and 3D terrain.
+    map.addSource('dem-shade', DEM);
+    map.addSource('dem-3d', { ...DEM, attribution: undefined });
+    map.addLayer({ id: 'hillshade', type: 'hillshade', source: 'dem-shade', layout: { visibility: 'none' }, paint: {
+      'hillshade-exaggeration': ['interpolate', ['linear'], ['zoom'], 6, 0.55, 12, 0.35], 'hillshade-shadow-color': '#2e2d2a',
+      'hillshade-highlight-color': '#ffffff', 'hillshade-accent-color': '#2e2d2a', 'hillshade-illumination-anchor': 'map' } }, 'dong-line');
+    // the DEM has sea-floor relief too: a copy of the basemap's water fill over the shading keeps the sea flat
+    const water = map.getStyle().layers.find(l => l.type === 'fill' && (l['source-layer'] === 'water' || l.id === 'water'));
+    if (water) map.addLayer({ id: 'water-over-shade', type: 'fill', source: water.source, layout: { visibility: 'none' }, paint: water.paint,
+      ...(water['source-layer'] ? { 'source-layer': water['source-layer'] } : {}), ...(water.filter ? { filter: water.filter } : {}) }, 'dong-line');
+    $('show-terrain').onchange = () => {
+      const v = $('show-terrain').checked ? 'visible' : 'none';
+      for (const l of ['hillshade', 'water-over-shade']) if (map.getLayer(l)) map.setLayoutProperty(l, 'visibility', v);
+      legend(metric());
+    };
+    $('show-terrain').onchange();
+    $('show-3d').onchange = () => {
+      const on = $('show-3d').checked;
+      map.setTerrain(on ? { source: 'dem-3d', exaggeration: 1.6 } : null);
+      map.easeTo({ pitch: on ? 60 : 0, bearing: on ? map.getBearing() : 0, duration: 800 });
+      legend(metric());
+    };
     paintMap();
     map.on('click', 'dong-fill', e => {
       const r = D[e.features[0].id];
@@ -242,6 +268,7 @@ function legend(m) {
     `<div class="row"><i class="pt" style="background:#a3a29c"></i>정류장(노선 수 자료 없음)</div>` +
     `<div class="row"><i class="pt" style="background:#6250d6;border:1.5px solid #fff;outline:1px solid #6250d6"></i>철도역</div>` +
     ($('show-grid').checked ? '<div class="row" style="margin-top:4px"><b>PM 연계 격자</b></div>' + [['#eb6834', 'PM 5분권'], ['#f6b38f', 'PM 10분권'], ['rgba(82,81,78,.55)', 'PM으로도 먼 곳'], ['rgba(214,213,208,.75)', '정류장 자료 부족']].map(([c, t]) => `<div class="row"><i style="background:${c}"></i>${t}</div>`).join('') + '<div class="row"><small>도보권은 투명</small></div>' : '') +
+    ($('show-terrain').checked || $('show-3d').checked ? `<div class="row" style="margin-top:4px"><small>${$('show-terrain').checked ? '지형 음영: 짙을수록 급한 경사(북서쪽 빛 가정). ' : ''}${$('show-3d').checked ? '3D: 높이 1.6배 과장. 오른쪽 위 나침반을 누르면 정북으로 돌아갑니다.' : ''}</small></div>` : '') +
     `<div class="row"><small>정류장은 확대(줌 10 이상)하면 보입니다.</small></div>`;
 }
 
