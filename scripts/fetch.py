@@ -631,7 +631,8 @@ def fetch_pm_fleet(key):
 
 
 def fetch_pm_parking(key):
-    """PM 주차구역 points: [{region, name, kind, cap, lon, lat, date, source}]."""
+    """PM 주차구역: [{region, name, kind, cap, lon, lat, date, source}]; lon and lat are None where a source gives no
+    coordinates (a quarter of 경기도's), which still count for their 시군."""
     pts = []
 
     def table(ns, fn):
@@ -640,7 +641,7 @@ def fetch_pm_parking(key):
             n0 = len(pts)
             for r in rows:
                 p = fn(r, title_date(title), title)
-                if p and p["lon"] and p["lat"]:
+                if p:
                     pts.append(p)
             print(f"  pm_parking {title}: {len(pts) - n0} points", flush=True)
         except Exception as e:  # noqa: BLE001
@@ -671,7 +672,6 @@ def fetch_pm_parking(key):
                 if page * 1000 >= total:
                     break
                 page += 1
-            pts = [p for p in pts if p["lon"] and p["lat"]]
             print(f"  pm_parking 경기도: {len(pts) - n0} points", flush=True)
         except Exception as e:  # noqa: BLE001
             print(f"  pm_parking 경기도: FAILED {e}", flush=True)

@@ -543,18 +543,36 @@ def write_pm_supply(dongs, pop, tree):
                      "lat": float(r["위도"]), "date": r["기준일"], "source": r["출처"]} for r in csv.DictReader(f)]
     sources = sorted({(p["source"], p["date"] or "") for p in pts})
     si = {s_: i for i, s_ in enumerate(sources)}
-    di = assign(tree, np.array([p["lon"] for p in pts]), np.array([p["lat"] for p in pts])) if pts else []
-    park = [[round(p["lon"], 6), round(p["lat"], 6), dongs[i]["sgg"] if i >= 0 else None, p["name"] or "", p["kind"] or "",
-             str(p["cap"] or ""), si[(p["source"], p["date"] or "")]] for p, i in zip(pts, di)]
+    # counts per 지역 unit (a 시 with 구 as one, since a source names only the 시 and some points lack coordinates)
+    punits, plost = {}, collections.Counter()
+    for g in (g for region in PARKING_WHOLE for g in codes(region)):
+        punits[(g,)] = {"name": unit_name([g]), "sgg": [g], "n": 0, "dates": set(), "sources": set()}
+    for p in pts:
+        cs = codes(p["region"])
+        if not cs:
+            plost[p["region"]] += 1
+            continue
+        u = punits.setdefault(tuple(cs), {"name": unit_name(cs), "sgg": cs, "n": 0, "dates": set(), "sources": set()})
+        u["n"] += 1
+        u["dates"].add(p["date"] or "")
+        u["sources"].add(p["source"])
+    parking_units = [{"name": u["name"], "sgg": u["sgg"], "n": u["n"], "date": " · ".join(sorted(d for d in u["dates"] if d)),
+                      "source": " · ".join(sorted(u["sources"]))} for u in punits.values()]
+    xy = [p for p in pts if p["lon"] and p["lat"]]
+    park = [[round(p["lon"], 6), round(p["lat"], 6), p["name"] or "", p["kind"] or "", str(p["cap"] or ""), si[(p["source"], p["date"] or "")]]
+            for p in xy]
     with open(os.path.join(OUT, "pm.json"), "w", encoding="utf-8") as f:
-        json.dump({"fleet": fleet, "seoul_companies": seoul, "parking": park, "parking_sources": sources},
+        json.dump({"fleet": fleet, "seoul_companies": seoul, "parking": park, "parking_sources": sources, "parking_units": parking_units},
                   f, ensure_ascii=False, separators=(",", ":"))
     print(f"PM fleet: {len(fleet)} units, {sum(u['total'] for u in fleet):,} devices; not mapped: "
           + (", ".join(f"{k} {v}" for k, v in lost.items()) or "-")
-          + f"; parking: {len(park)} points ({sum(p[2] is None for p in park)} outside every 행정동) from "
-          + ", ".join(f"{s_} {d_}" for s_, d_ in sources), flush=True)
+          + f"; parking: {len(pts)} zones in {len(parking_units)} units ({len(park)} with coordinates), not mapped: "
+          + (", ".join(f"{k} {v}" for k, v in plost.items()) or "-"), flush=True)
 
 
+# parking zones are counted per 지역 named by their source (경기도 lists only the 시군 that reported); 서울's file covers the
+# whole city, so a 구 it does not name has none
+PARKING_WHOLE = ["서울특별시"]
 ACC_OLD = {("28", "중구"): ("제물포구", "영종구"), ("28", "서구"): ("서해구", "검단구")}  # 인천 구 before the 2026 reorganization
 
 
