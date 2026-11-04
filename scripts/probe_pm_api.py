@@ -29,9 +29,13 @@ for url in ("https://www.data.go.kr/catalog/15117668/openapi.json", "https://www
                     print(f"  {method.upper()} {path}: {op.get('summary', '')} | params {params}", flush=True)
                     ops.append(path)
         else:
-            for m in sorted(set(re.findall(r"/PersonalMobilityInfo/(\w+)", r.text))):
-                print("  op in page:", m, flush=True)
-                ops.append("/" + m)
+            t = r.text
+            words = sorted(set(re.findall(r"\bget[A-Z]\w{3,60}", t)))
+            print("  get* words:", words, flush=True)
+            ops += ["/" + w for w in words]
+            for kw in ("PersonalMobility", "swagger", "oprtin", "상세기능", "요청주소", "End Point", "Base URL"):
+                for m in list(re.finditer(kw, t))[:4]:
+                    print(f"  [{kw}]", re.sub(r"\s+", " ", t[max(0, m.start() - 150):m.start() + 350]), flush=True)
             for m in re.findall(r"(?:갱신주기|업데이트 주기|제공기관|비용부과|트래픽)[^<]{0,80}", r.text)[:10]:
                 print("  ", m.strip(), flush=True)
     except Exception as e:  # noqa: BLE001
