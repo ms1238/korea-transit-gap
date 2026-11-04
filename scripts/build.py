@@ -6,14 +6,19 @@
    but no coordinates): by 시군구 code, else by 시군구 name (the API keeps pre-2026 codes, so its 시도 are mapped onto
    the current ones, SIDO_GROUP), else (인천's new 구) by a name unique within the 시도. A 시군구 whose stops match less than
    ROUTE_MATCH_MIN gets no route figures. A non-dense 시군구 with fewer than GAP_STOPS_PER_1000 stops per 1,000 people
-   lacks stop data in both sources (e.g. 화천, 속초) and gets no bus figures instead of a false gap.
+   lacks stop data in both sources (e.g. 화천, 속초) and gets no bus figures instead of a false gap; so does one with fewer
+   than GAP_STOPS_PER_HAB_KM2 stops per ㎢ of 생활권 land (e.g. 평창, 인제, 영광: a few dozen stops for whole 군).
 3. Coverage per 행정동 on a Web Mercator pixel grid (~170 m): the share of its area within BUS_M of a bus stop, within
    RAIL_M of a railway station, and within BUS_M of a well-served stop (GOOD_ROUTES or more routes, or routes unknown:
    a stop whose name matched no 정차 노선수 entry gets the benefit of the doubt rather than counting as sparse); and the
    PM classes of GRID_CLASSES (도보권, PM 5분권, PM 10분권, beyond) around PM anchors (stations and well-served stops),
-   drawn as pmgrid.png. Distances are straight lines.
-3b. PM 잠재 지수 per 행정동: geometric mean of the percentile ranks of the PM-reachable share, population density,
-    상가 density and (once the 행정동 age data is there) the share of residents aged 20–39. A 행정동 whose PM-reachable
+   drawn as pmgrid.png. Distances are straight lines. A PM 5/10분권 cell is 경사로 PM 곤란 when the mean grade to its
+   anchor (elevation difference over the riding distance) exceeds GRADE_MAX or its own terrain slope exceeds SLOPE_MAX,
+   both on an elevation model cleaned of buildings (see load_terrain).
+   Every share is computed twice: over the whole area, and over 생활권 land only, each cell weighted by its share of
+   ESA WorldCover classes HABITABLE (built-up, cropland, grassland, bare): forests, water and wetlands are left out.
+3b. PM 잠재 지수 per 행정동: geometric mean of the percentile ranks of the PM-reachable share (생활권 land, steep
+    cells excluded), population and 상가 density per km² of 생활권 land, and (once the 행정동 age data is there) the share of residents aged 20–39. A 행정동 whose PM-reachable
     share is under PM_INDEX_MIN scores 0: density alone (central Seoul, all within walking distance) is no PM gap.
 3c. 산업단지 (한국산업단지공단), LH 임대 세대 and age structure (20–39, 70+) per 시군구.
 4. 행정동 type from the name: 동 (urban 행정구역), 읍, 면.
@@ -37,6 +42,7 @@ from collections import defaultdict
 import numpy as np
 import shapely
 from PIL import Image
+from scipy import ndimage
 from scipy.spatial import cKDTree
 from scipy.stats import rankdata
 
@@ -47,6 +53,7 @@ GOOD_ROUTES = 3  # a stop with fewer routes counts as sparsely served
 OSM_FILL, DEDUP_M = 0.5, 50
 ROUTE_MATCH_MIN = 0.6
 GAP_STOPS_PER_1000, GAP_DENSITY = 2.0, 3000  # a non-dense 시군구 (people per ㎢) with fewer stops per 1,000 people lacks stop data
+GAP_STOPS_PER_HAB_KM2 = 1.0  # …as does one with fewer stops per ㎢ of 생활권 land (the median 시군구 has about 10)
 SIDO_GROUP = {"29": "12", "46": "12", "42": "51", "45": "52"}  # 광주·전남 → 전남광주통합특별시, old 강원·전북 codes
 SIMPLIFY_DEG = 0.0004  # ~40 m
 # PM first/last mile (Geurs & van Wee's contour measure): reach within 5 and 10 minutes of riding, as straight lines
@@ -57,7 +64,18 @@ TRIPS_MIN = 0.02  # 교통카드 trips per resident a day under which a 시군�
 # Web Mercator pixel grid over South Korea (under 4096 px a side, the usual WebGL texture limit); ~170 m at 36°N
 LON0, LON1, LAT0, LAT1, PIX_M, R_EARTH = 124.5, 132.0, 33.0, 38.7, 210, 6378137.0
 GRID_CLASSES = {1: ("도보권", None), 2: ("PM 5분권", (235, 104, 52, 210)), 3: ("PM 10분권", (246, 179, 143, 190)),
-                4: ("PM으로도 먼 곳", (82, 81, 78, 130)), 5: ("정류장 자료 부족", (214, 213, 208, 170))}  # 0: outside Korea
+                4: ("PM으로도 먼 곳", (82, 81, 78, 130)), 5: ("정류장 자료 부족", (214, 213, 208, 170)),
+                6: ("경사로 PM 곤란", (24, 118, 110, 190)), 7: ("산림·수면 (생활권 밖)", (150, 168, 128, 95))}  # 0: outside Korea
+# Slope (assumed thresholds, see about.html for the sensitivity): mean grade from a cell to its PM anchor, and the cell's own
+# terrain slope. The elevation model is SRTM-based and includes buildings: an opening over OPEN_PX pixels (≈ 300 m) removes
+# narrower bumps (apartment blocks) and a Gaussian of SMOOTH_PX smooths what is left; flat high-rise areas (잠실, 여의도) then
+# read 1–1.5% and real hillside neighbourhoods (부산 감천·초량, 해방촌) 14–16%.
+GRADE_MAX, SLOPE_MAX = 0.06, 0.10
+STEEP_SENS = [(0.04, 0.08), (0.06, 0.10), (0.08, 0.15)]  # (grade, slope) pairs reported for sensitivity
+OPEN_PX, SMOOTH_PX, SPIKE_M = 5, 2, 150
+HABITABLE = (30, 40, 50, 60)  # ESA WorldCover: grassland, cropland, built-up, bare / sparse vegetation
+HAB_MIN_KM2 = 0.05  # floor of the 생활권 area used for densities
+COV = ["bus", "rail", "either", "good", "walk", "pm5", "pm10", "steep", "far"]  # coverage shares per 행정동
 
 
 def load(name):
@@ -159,10 +177,65 @@ def inv_merc_y(y):
     return np.degrees(2 * np.arctan(np.exp(np.asarray(y) / R_EARTH)) - np.pi / 2)
 
 
+def load_terrain():
+    """Cleaned elevation (m) and terrain slope (rise / run) on the mosaic of raw/terrain.npz, and a function giving the
+    mosaic (row, col) of lon/lat; None if the file is missing. Spikes (a pixel more than SPIKE_M off its 3×3 median) take
+    that median; sea is set to 0 m first so the coast is not dragged down."""
+    path = os.path.join(RAW, "terrain.npz")
+    if not os.path.exists(path):
+        return None
+    d = np.load(path)
+    dem = d["dem"].astype(np.float32) / 10
+    z, x0, y0 = int(d["z"]), int(d["x0"]), int(d["y0"])
+    np.maximum(dem, 0, out=dem)
+    med = ndimage.median_filter(dem, 3)
+    bad = np.abs(dem - med) > SPIKE_M
+    dem[bad] = med[bad]
+    del med
+    dem = ndimage.gaussian_filter(ndimage.grey_opening(dem, size=OPEN_PX), SMOOTH_PX)
+    n = 2 ** z * 256
+    lat = np.degrees(np.arctan(np.sinh(np.pi * (1 - 2 * (y0 * 256 + np.arange(dem.shape[0]) + 0.5) / n))))
+    res = (2 * np.pi * R_EARTH / n * np.cos(np.radians(lat))).astype(np.float32)[:, None]
+    gy, gx = np.gradient(dem)
+    slope = np.hypot(gx / res, gy / res)
+    del gx, gy
+
+    def at(lon, lat):
+        lon, lat = np.asarray(lon, float), np.asarray(lat, float)
+        c = ((lon + 180) / 360 * n - x0 * 256).astype(int)
+        r = ((1 - np.arcsinh(np.tan(np.radians(lat))) / np.pi) / 2 * n - y0 * 256).astype(int)
+        return np.clip(r, 0, dem.shape[0] - 1), np.clip(c, 0, dem.shape[1] - 1)
+    print(f"terrain: z{z}, {dem.shape[1]} x {dem.shape[0]} px, {int(bad.sum())} spikes fixed, max {dem.max():.0f} m", flush=True)
+    return dem, slope, at
+
+
+def load_habitable(w, h):
+    """Share of 생활권 land (WorldCover HABITABLE) in each cell of the W × H build grid, from raw/landcover.npz (all 1 if
+    the file is missing). The land cover raster is finer than the grid, so its pixels are summed per cell."""
+    path = os.path.join(RAW, "landcover.npz")
+    if not os.path.exists(path):
+        return None
+    d = np.load(path)
+    lc, lon0, lat1, k = d["lc"], float(d["lon0"]), float(d["lat1"]), int(d["per_deg"])
+    col = np.floor((merc_x(lon0 + (np.arange(lc.shape[1]) + 0.5) / k) - merc_x(LON0)) / PIX_M).astype(int)
+    row = np.floor((merc_y(LAT1) - merc_y(lat1 - (np.arange(lc.shape[0]) + 0.5) / k)) / PIX_M).astype(int)
+    cs, rs = np.where((col >= 0) & (col < w))[0], np.where((row >= 0) & (row < h))[0]
+    hab = np.isin(lc[rs[0]:rs[-1] + 1, cs[0]:cs[-1] + 1], HABITABLE).astype(np.int32)
+    col, row = col[cs[0]:cs[-1] + 1], row[rs[0]:rs[-1] + 1]
+    c0 = np.r_[0, np.where(np.diff(col))[0] + 1]
+    r0 = np.r_[0, np.where(np.diff(row))[0] + 1]
+    sums = np.add.reduceat(np.add.reduceat(hab, c0, axis=1), r0, axis=0)
+    cnt = np.diff(np.r_[r0, len(row)])[:, None] * np.diff(np.r_[c0, len(col)])[None, :]
+    out = np.ones((h, w), np.float32)
+    out[row[r0][0]:row[r0][-1] + 1, col[c0][0]:col[c0][-1] + 1] = sums / cnt
+    print(f"생활권 land: {np.mean(np.isin(lc, HABITABLE)):.1%} of the land cover raster", flush=True)
+    return out
+
+
 def write_grid(img, w, h):
     """The PM grid as a palette PNG (pmgrid.png); 도보권 and outside are transparent."""
     pal, alpha = [], []
-    for k in range(6):
+    for k in range(8):
         rgba = GRID_CLASSES.get(k, (None, None))[1] or (0, 0, 0, 0)
         pal += rgba[:3]
         alpha.append(rgba[3])
@@ -394,7 +467,17 @@ def main():
     print(f"well-served stops: {good.sum()} ({np.sum(s_rte_ok >= GOOD_ROUTES)} with {GOOD_ROUTES}+ routes, {np.sum(s_rte_ok < 0)} unknown)", flush=True)
     W, H = math.ceil((merc_x(LON1) - merc_x(LON0)) / PIX_M), math.ceil((merc_y(LAT1) - merc_y(LAT0)) / PIX_M)
     img = np.zeros((H, W), np.uint8)  # GRID_CLASSES
-    cov = np.zeros((len(dongs), 8))  # bus, rail, either, well-served bus, walk, PM 5 min, PM 10 min, beyond
+    hab_grid = load_habitable(W, H)
+    terrain = load_terrain()
+    if terrain:
+        dem, slope, dem_at = terrain
+        h_good = dem[dem_at(s_lon[good], s_lat[good])]
+        h_rail = dem[dem_at([s[0] for s in stations], [s[1] for s in stations])]
+    cov = np.zeros((len(dongs), len(COV)))  # over the whole area
+    cov_h = np.full((len(dongs), len(COV)), np.nan)  # over 생활권 land
+    hab = np.ones(len(dongs))  # 생활권 share of the 행정동
+    sens = np.zeros((len(dongs), len(STEEP_SENS) + 1))  # 생활권 PM 5/10분권 area that would be steep, per (grade, slope) pair; last: all
+    cells = [None] * len(dongs)  # (rows, cols, 생활권 weights) of the cells drawn for each 행정동
     for i, g in enumerate(geoms):
         lo0, la0, lo1, la1 = g.bounds
         c = np.arange(max(0, int((merc_x(lo0) - merc_x(LON0)) / PIX_M)), min(W, int((merc_x(lo1) - merc_x(LON0)) / PIX_M) + 1))
@@ -404,23 +487,63 @@ def main():
         lat = inv_merc_y(merc_y(LAT1) - (R_.ravel() + 0.5) * PIX_M)
         inside = shapely.contains_xy(g, lon, lat)
         if inside.any():
-            pts, rr, cc = proj(lon[inside], lat[inside]), R_.ravel()[inside], C_.ravel()[inside]
+            lon, lat, rr, cc = lon[inside], lat[inside], R_.ravel()[inside], C_.ravel()[inside]
+            draw = True
         else:  # smaller than a pixel
             p = g.representative_point()
-            pts, rr, cc = proj([p.x], [p.y]), None, None
+            lon, lat = np.array([p.x]), np.array([p.y])
+            rr = np.clip([int((merc_y(LAT1) - merc_y(p.y)) / PIX_M)], 0, H - 1)
+            cc = np.clip([int((merc_x(p.x) - merc_x(LON0)) / PIX_M)], 0, W - 1)
+            draw = False
+        pts = proj(lon, lat)
         b = bus_t.query(pts, distance_upper_bound=BUS_M)[0] <= BUS_M
-        dr = rail_t.query(pts, distance_upper_bound=PM10_M)[0]
-        da = good_t.query(pts, distance_upper_bound=PM10_M)[0]
+        dr, ir = rail_t.query(pts, distance_upper_bound=PM10_M)
+        da, ia = good_t.query(pts, distance_upper_bound=PM10_M)
         w = da <= BUS_M
         walk = (da <= BUS_M) | (dr <= RAIL_M)
         near = np.minimum(da, dr)
         cls = np.where(walk, 1, np.where(near <= PM5_M, 2, np.where(near <= PM10_M, 3, 4)))
-        if dongs[i]["sgg"] in stop_gap:
-            cls[:] = 5
-        if rr is not None:
-            img[rr, cc] = cls
-        cov[i] = [b.mean(), (dr <= RAIL_M).mean(), (b | (dr <= RAIL_M)).mean(), w.mean()] + [(cls == k).mean() for k in (1, 2, 3, 4)]
+        hw = hab_grid[rr, cc] if hab_grid is not None else np.ones(len(cls))
+        pm = (cls == 2) | (cls == 3)
+        if terrain and pm.any():
+            hc = dem[dem_at(lon, lat)]
+            ha = np.where(da <= dr, h_good[np.minimum(ia, len(h_good) - 1)], h_rail[np.minimum(ir, len(h_rail) - 1)])
+            grade = np.abs(hc - ha) / np.maximum(near * PM_DETOUR, 1)
+            sl = slope[dem_at(lon, lat)]
+            for k, (gmax, smax) in enumerate(STEEP_SENS):
+                sens[i, k] = np.sum(hw * (pm & ((grade > gmax) | (sl > smax))))
+            cls[pm & ((grade > GRADE_MAX) | (sl > SLOPE_MAX))] = 6
+        sens[i, -1] = np.sum(hw * pm)
+        if draw:
+            img[rr, cc] = np.where(hw < 0.5, 7, cls)
+            cells[i] = (rr, cc, hw)
+        parts = [b, dr <= RAIL_M, b | (dr <= RAIL_M), w] + [cls == k for k in (1, 2, 3, 6, 4)]
+        cov[i] = [x.mean() for x in parts]
+        hab[i] = hw.mean()
+        if hw.sum() > 0:
+            cov_h[i] = [np.sum(hw * x) / hw.sum() for x in parts]
+    # stop data gaps by 생활권 area (needs the land cover per 행정동, so only now): no bus figures, grey on the PM grid
+    if hab_grid is not None:
+        g_hab, g_lack = defaultdict(float), set()
+        for i, d in enumerate(dongs):
+            g_hab[d["sgg"]] += area[i] / 1e6 * hab[i]
+        g_lack = {g for g in g_hab if g_hab[g] and g_stop[g] / g_hab[g] < GAP_STOPS_PER_HAB_KM2} - stop_gap
+        print("stop data gaps by 생활권 area: " + (", ".join(sorted(f"{dongs[np.where(sgg_of == g)[0][0]]['sggnm']}({g_stop[g]} stops, "
+              f"{g_hab[g]:.0f}㎢)" for g in g_lack)) or "-"), flush=True)
+        stop_gap |= g_lack
+    for i, d in enumerate(dongs):
+        if d["sgg"] in stop_gap and cells[i]:
+            rr, cc, hw = cells[i]
+            img[rr, cc] = np.where(hw < 0.5, 7, 5)
     write_grid(img, W, H)
+    u = np.array([dong_type(d["name"]) == "동" and d["sgg"] not in stop_gap for d in dongs])
+    s_all, s_u = sens[[d["sgg"] not in stop_gap for d in dongs]].sum(0), sens[u].sum(0)
+    steep_sens = [[gmax, smax, round(float(s_all[k] / s_all[-1]), 4), round(float(s_u[k] / s_u[-1]), 4)]
+                  for k, (gmax, smax) in enumerate(STEEP_SENS)] if terrain and s_all[-1] and s_u[-1] else None
+    if steep_sens:
+        print("steep share of 생활권 PM 5/10분권 by (grade, slope): " + ", ".join(f"({a:.0%}, {b:.0%}) {c:.1%} / 동 {e:.1%}" for a, b, c, e in steep_sens), flush=True)
+    if terrain:
+        del dem, slope, terrain
 
     # destinations and context
     n_store, store_ok, store_ym = load_stores(tree, dongs)
@@ -445,9 +568,11 @@ def main():
         def ranks(v):  # percentile rank in (0, 1), ties share their mean rank
             return (rankdata(v) - 0.5) / len(v)
         idx = np.array(has)
-        pmv = cov[idx, 5] + cov[idx, 6]
+        ch = np.where(np.isnan(cov_h[idx]), cov[idx], cov_h[idx])
+        pmv = ch[:, COV.index("pm5")] + ch[:, COV.index("pm10")]
         ok = pmv >= PM_INDEX_MIN
-        parts = [np.zeros(len(idx)), ranks(np.array([pop[i] for i in has]) / area[idx]), ranks(n_store[idx] / area[idx])]
+        hab_km2 = np.maximum(area[idx] / 1e6 * hab[idx], HAB_MIN_KM2)
+        parts = [np.zeros(len(idx)), ranks(np.array([pop[i] for i in has]) / hab_km2), ranks(n_store[idx] / hab_km2)]
         parts[0][ok] = ranks(pmv[ok])  # among the 행정동 with a PM gap
         if use_age:
             parts.append(ranks(np.array([dage[i][1] / dage[i][0] for i in has])))
@@ -466,23 +591,29 @@ def main():
             n_few[i] += s_rte_ok[j] < GOOD_ROUTES
             sum_rte[i] += s_rte_ok[j]
     cols = ["code", "name", "sido", "sidonm", "sgg", "sggnm", "type", "pop", "area_km2", "stops", "stops_known", "stops_few",
-            "routes_sum", "bus500", "rail1k", "either", "good500", "route_ok", "osm_fill", "stop_gap",
-            "walk", "pm5", "pm10", "far", "stores", "pm_index", "y2039", "o70"]
+            "routes_sum", "route_ok", "osm_fill", "stop_gap", "stores", "pm_index", "y2039", "o70", "hab",
+            "bus500", "rail1k", "either", "good500", "walk", "pm5", "pm10", "steep", "far"]
+    cols += ["h_" + c for c in cols[-9:]]  # the same shares over 생활권 land
+
+    def shares(v, ok, gap):
+        r = lambda x: None if x is None or np.isnan(x) else round(float(x), 4)
+        return [None if gap else r(v[0]), r(v[1]), None if gap else r(v[2]), r(v[3]) if ok and not gap else None] \
+            + ([None] * 5 if gap else [r(x) for x in v[4:]])
     rows = []
     for i, d in enumerate(dongs):
         ok, gap = d["sgg"] in route_ok, d["sgg"] in stop_gap
         rows.append([d["code"], d["name"], d["sido"], d["sidonm"], d["sgg"], d["sggnm"], dong_type(d["name"]), pop[i],
                      round(area[i] / 1e6, 3), int(n_stop[i]), int(n_known[i]), int(n_few[i]), int(sum_rte[i]),
-                     None if gap else round(cov[i, 0], 4), round(cov[i, 1], 4), None if gap else round(cov[i, 2], 4),
-                     round(cov[i, 3], 4) if ok and not gap else None, int(ok), int(d["sgg"] in fill), int(gap)]
-                    + ([None] * 4 if gap else [round(cov[i, k], 4) for k in (4, 5, 6, 7)])
-                    + [int(n_store[i]) if d["sgg"] in store_ok else None, pm_index[i]]
-                    + ([round(dage[i][1] / dage[i][0], 4), round(dage[i][2] / dage[i][0], 4)] if dage[i] and dage[i][0] else [None, None]))
+                     int(ok), int(d["sgg"] in fill), int(gap), int(n_store[i]) if d["sgg"] in store_ok else None, pm_index[i]]
+                    + ([round(dage[i][1] / dage[i][0], 4), round(dage[i][2] / dage[i][0], 4)] if dage[i] and dage[i][0] else [None, None])
+                    + [round(float(hab[i]), 4)] + shares(cov[i], ok, gap) + shares(cov_h[i], ok, gap))
     a = area / 1e6
     u = np.array([dong_type(d["name"]) == "동" for d in dongs])
-    print(f"coverage (area-weighted): bus {np.sum(cov[:, 0] * a) / a.sum():.1%}, rail {np.sum(cov[:, 1] * a) / a.sum():.1%}, "
-          f"either {np.sum(cov[:, 2] * a) / a.sum():.1%}; 동 only bus {np.sum(cov[u, 0] * a[u]) / a[u].sum():.1%}; "
-          f"동 only walk / PM 5 / PM 10 / beyond: " + " / ".join(f"{np.sum(cov[u, k] * a[u]) / a[u].sum():.1%}" for k in (4, 5, 6, 7)), flush=True)
+    for name, cv, wt in (("whole area", cov, a), ("생활권 land", np.nan_to_num(cov_h), a * hab)):
+        print(f"coverage ({name}, area-weighted): either {np.sum(cv[:, 2] * wt) / wt.sum():.1%} outside walking distance "
+              f"{1 - np.sum(cv[:, 2] * wt) / wt.sum():.1%}; 동 only walk / PM 5 / PM 10 / steep / beyond: "
+              + " / ".join(f"{np.sum(cv[u, COV.index(k)] * wt[u]) / wt[u].sum():.1%}" for k in ("walk", "pm5", "pm10", "steep", "far")), flush=True)
+    print(f"생활권 share of the land: {np.sum(a * hab) / a.sum():.1%} (동 {np.sum(a[u] * hab[u]) / a[u].sum():.1%})", flush=True)
 
     trips, tmonths, tlost = load_trips(dongs)
     print(f"trips: {len(trips)} 시군구 (months {', '.join(tmonths) or '-'}), "
@@ -503,6 +634,8 @@ def main():
             "industrial_date": next(iter(ind.values()))["date"] if ind else None, "lh_table": lh_table(),
             "bus_m": BUS_M, "rail_m": RAIL_M, "grid_m": round(PIX_M * math.cos(math.radians(36))), "good_routes": GOOD_ROUTES,
             "pm_speed": PM_SPEED_KMH, "pm_detour": PM_DETOUR, "pm5_m": PM5_M, "pm10_m": PM10_M, "pm_index_min": PM_INDEX_MIN, "trips_min": TRIPS_MIN,
+            "grade_max": GRADE_MAX, "slope_max": SLOPE_MAX,
+"steep_sens": steep_sens, "landcover": hab_grid is not None,
             "grid_bounds": [[LON0, inv_merc_y(merc_y(LAT1))], [LON0 + np.degrees(W * PIX_M / R_EARTH), inv_merc_y(merc_y(LAT1) - H * PIX_M)]]}
     with open(os.path.join(OUT, "stats.json"), "w", encoding="utf-8") as f:
         json.dump({"meta": meta, "cols": cols, "rows": rows, "sgg_trips": sgg_trips, "sgg_urban": upis, "sgg_industrial": ind, "sgg_lh": lh, "sgg_age": age},
@@ -520,11 +653,12 @@ def main():
         json.dump(stations, f, ensure_ascii=False, separators=(",", ":"))
     with open(os.path.join(OUT, "download", "dongs.csv"), "w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f)
+        share = [f"버스{BUS_M}m권역비율", f"철도{RAIL_M}m권역비율", "버스또는철도권역비율", f"노선{GOOD_ROUTES}개이상정류장{BUS_M}m권역비율",
+                 "도보권비율", "PM5분권비율", "PM10분권비율", "경사로PM곤란비율", "PM으로도먼곳비율"]
         w.writerow(["행정동코드", "행정동", "시도코드", "시도", "시군구코드", "시군구", "구분", "주민등록인구", "면적_km2", "정류장수",
-                    "노선수확인정류장", f"노선{GOOD_ROUTES - 1}개이하정류장", "정차노선합계", f"버스{BUS_M}m권역비율",
-                    f"철도{RAIL_M}m권역비율", "버스또는철도권역비율", f"노선{GOOD_ROUTES}개이상정류장{BUS_M}m권역비율",
-                    "노선수자료있음", "OSM정류장보완", "정류장위치자료부족", "도보권비율", "PM5분권비율", "PM10분권비율",
-                    "PM으로도먼곳비율", "상가업소수", "PM잠재지수", "20~39세비중", "70세이상비중"])
+                    "노선수확인정류장", f"노선{GOOD_ROUTES - 1}개이하정류장", "정차노선합계", "노선수자료있음", "OSM정류장보완",
+                    "정류장위치자료부족", "상가업소수", "PM잠재지수", "20~39세비중", "70세이상비중", "생활권면적비중"]
+                   + ["전체면적_" + x for x in share] + ["생활권면적_" + x for x in share])
         w.writerows(rows)
     for name in ("stats.json", "dongs.geojson", "stops.json", "stations.json", "pmgrid.png"):
         print(f"  {name}: {os.path.getsize(os.path.join(OUT, name)) / 1e6:.1f} MB", flush=True)

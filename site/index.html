@@ -17,7 +17,7 @@
 <section class="insights">
   <h2 id="ins-title">지역별 인사이트</h2>
   <ul id="insights"></ul>
-  <p class="note">아래에서 시도·시군구를 고르거나 '동 지역만'을 켜면 그 범위로 다시 정리됩니다. 숫자는 면적 기준(도보권·PM권)과 자료가 있는 곳 기준입니다.</p>
+  <p class="note">아래에서 시도·시군구를 고르거나 '동 지역만'을 켜면 그 범위로 다시 정리됩니다. 숫자는 면적 기준(기본은 산림·수면을 뺀 생활권 면적)이며 자료가 있는 곳만 셉니다.</p>
 </section>
 
 <section class="controls">
@@ -26,6 +26,7 @@
   <label>시군구 <select id="sgg"><option value="">전체</option></select></label>
   <label>읍면동 <select id="dong"><option value="">전체</option></select></label>
   <label class="chk"><input type="checkbox" id="urban"> 동 지역만 (도시형 행정동)</label>
+  <label class="chk" title="ESA WorldCover 토지피복에서 산림·수면·습지를 빼고 시가지·농지·초지만으로 비율을 냅니다"><input type="checkbox" id="hab" checked> 산림·수면 제외 (생활권 면적)</label>
   <label class="chk"><input type="checkbox" id="show-stops" checked> 정류장</label>
   <label class="chk"><input type="checkbox" id="show-rail" checked> 철도역</label>
   <label class="chk"><input type="checkbox" id="show-grid"> PM 연계 격자</label>
@@ -52,7 +53,7 @@
 </section>
 
 <footer>
-  <p>자료: 국토교통부 전국 버스정류장 위치정보·정류장별 정차 노선수(공공데이터포털), 행정안전부 주민등록 인구, 통계청 행정동 경계(vuski/admdongkor), © OpenStreetMap 기여자. 자세한 내용은 <a href="about.html">설명 페이지</a>.</p>
+  <p>자료: 국토교통부 전국 버스정류장 위치정보·정류장별 정차 노선수(공공데이터포털), 행정안전부 주민등록 인구, 통계청 행정동 경계(vuski/admdongkor), © OpenStreetMap 기여자, ESA WorldCover 2021(CC BY 4.0), Mapzen Terrain Tiles. 자세한 내용은 <a href="about.html">설명 페이지</a>.</p>
 </footer>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="app.js"></script>

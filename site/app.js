@@ -10,10 +10,11 @@ const DEM = { type: 'raster-dem', tiles: ['https://s3.amazonaws.com/elevation-ti
   attribution: '<a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md" target="_blank">지형: Mapzen Terrain Tiles</a>' };
 
 // Every metric is a gap share (higher = worse) so the map always reads "darker = less served".
-// v(x) takes an aggregate {area, pop, stops, known, few, bus, rail, either, good, goodArea} and returns 0..1 or null.
+// v(x) takes an aggregate of agg() and returns 0..1 or null. Area shares follow the basis toggle: 생활권 land (산림·수면 제외,
+// the h_ columns weighted by 생활권 area) or the whole area.
 const METRICS = [
   { id: 'either', name: '버스·철도 도보권 밖 면적 비율', v: x => x.busArea ? 1 - x.either / x.busArea : null,
-    note: m => `버스 정류장 ${m.bus_m}m, 철도역 ${m.rail_m / 1000}km(직선거리) 어디에도 들지 않는 면적의 비율입니다. 면적 기준이라 산지가 넓은 읍·면은 실제 생활권보다 나쁘게 보일 수 있습니다.` },
+    note: m => `버스 정류장 ${m.bus_m}m, 철도역 ${m.rail_m / 1000}km(직선거리) 어디에도 들지 않는 면적의 비율입니다.` + (st.hab ? '' : ' 전체 면적 기준이라 산지가 넓은 읍·면은 실제 생활권보다 훨씬 나쁘게 보입니다.') },
   { id: 'bus', name: `버스 정류장 도보권 밖 면적 비율`, v: x => x.busArea ? 1 - x.bus / x.busArea : null,
     note: m => `가장 가까운 버스 정류장까지 직선거리 ${m.bus_m}m가 넘는 면적의 비율입니다.` },
   { id: 'good', name: '노선 넉넉한 정류장 도보권 밖 면적 비율', v: x => x.goodArea ? 1 - x.good / x.goodArea : null,
@@ -22,7 +23,9 @@ const METRICS = [
     note: m => `걸어서는 버스 정류장(노선 ${m.good_routes}개 이상, 노선 수를 모르는 곳은 모든 정류장) ${m.bus_m}m·철도역 ${m.rail_m / 1000}km 밖이지만, PM으로 10분(평균 ${m.pm_speed}km/h, 도로 우회 ${m.pm_detour}배 가정 → 직선 ${(m.pm10_m / 1000).toFixed(1)}km) 안에 그 정류장·역에 닿는 면적의 비율입니다. 높을수록 PM이 첫·마지막 구간을 메울 여지가 큽니다. 면적 기준입니다.` },
   { id: 'pmidx', name: 'PM 잠재 지수', good: 1, idx: 1, v: x => x.idxW ? x.idx / x.idxW / 100 : null,
     note: m => `PM 10분 안에 새로 닿는 면적 비율, 인구 밀도, 상가 밀도${m.pm_index_age ? ', 20~39세 주민 비중' : ''}을 전국 행정동 순위(0~1)로 바꿔 기하평균한 값(0~100)입니다. 기하평균이라 한 요소라도 낮으면 지수가 낮아지고, PM 10분권 면적이 ${Math.round((m.pm_index_min ?? 0.1) * 100)}% 미만인 행정동(대부분 걸어서 정류장·역에 닿는 곳)은 인구·상가가 아무리 많아도 0입니다. 높을수록 PM이 메울 공백과 수요가 함께 있는 곳입니다. 시군구·시도는 인구 가중 평균이며, 상가 자료가 아직 없는 시군구는 비어 있습니다.` },
-  { id: 'rail', name: '철도역 1km 밖 면적 비율', v: x => x.area ? 1 - x.rail / x.area : null,
+  { id: 'steep', name: '경사로 PM 곤란 면적 비율', v: x => x.pmArea ? x.steep / x.pmArea : null,
+    note: m => `PM으로 10분 거리 안이지만 경사 때문에 PM 연계가 어려운 면적의 비율입니다. 가장 가까운 정류장·역까지의 평균 경사(높이 차 ÷ 주행거리)가 ${m.grade_max * 100}%를 넘거나, 그 자리 지형 경사가 ${m.slope_max * 100}%를 넘으면 '곤란'으로 봅니다(가정값). 고도 자료의 건물 높이를 걸러낸 뒤 계산했습니다. 이 면적은 'PM 10분 안에 새로 닿는 면적'에서 빠집니다.` },
+  { id: 'rail', name: '철도역 1km 밖 면적 비율', v: x => x.railArea ? 1 - x.rail / x.railArea : null,
     note: m => `도시철도·광역철도·일반철도·KTX 역에서 직선거리 ${m.rail_m / 1000}km가 넘는 면적의 비율입니다.` },
   { id: 'few', name: `(참고) 노선 2개 이하 정류장 비율`, v: x => x.known ? x.few / x.known : null,
     note: m => `정차 노선수가 확인된 정류장 가운데 노선이 ${m.good_routes - 1}개 이하인 정류장의 비율입니다(교통카드 자료 기준). 소외 지표가 아닙니다: 서울처럼 마을버스 정류장이 촘촘한 곳은 노선 1~2개 정류장이 많아도 근처에 노선 많은 정류장이 있어 높게 나옵니다. 소외 정도는 '노선 넉넉한 정류장 도보권 밖 면적 비율'로 보세요.` },
@@ -30,18 +33,21 @@ const METRICS = [
 const M = id => METRICS.find(m => m.id === id);
 
 let D, C, GEO, T, U, IND, LH, AGE, SGGPOP, meta, map, sortSgg = { k: 'v', asc: false }, sortDong = { k: 'v', asc: false }, pickSgg = null;
-const st = { metric: 'either', sido: '', urban: false };
+const st = { metric: 'either', sido: '', urban: false, hab: true };
+const K = k => C[(st.hab ? 'h_' : '') + k];  // the column of an area share on the current basis
+const basis = () => st.hab ? '생활권 면적(산림·수면 제외)' : '전체 면적';
 
 function agg(rows) {
-  const x = { area: 0, pop: 0, stops: 0, known: 0, few: 0, bus: 0, rail: 0, either: 0, busArea: 0, good: 0, goodArea: 0, n: rows.length,
-    walk: 0, pm5: 0, pm10: 0, far: 0, pmArea: 0, stores: 0, storeArea: 0, idx: 0, idxW: 0 };
+  const x = { area: 0, hab: 0, pop: 0, stops: 0, known: 0, few: 0, bus: 0, rail: 0, railArea: 0, either: 0, busArea: 0, good: 0, goodArea: 0, n: rows.length,
+    walk: 0, pm5: 0, pm10: 0, steep: 0, far: 0, pmArea: 0, stores: 0, storeArea: 0, idx: 0, idxW: 0 };
+  const kb = K('bus500'), kr = K('rail1k'), ke = K('either'), kg = K('good500'), kw = K('walk'), k5 = K('pm5'), k10 = K('pm10'), ks = K('steep'), kf = K('far');
   for (const r of rows) {
-    const a = r[C.area_km2];
-    x.area += a; x.pop += r[C.pop] || 0; x.stops += r[C.stops]; x.known += r[C.stops_known]; x.few += r[C.stops_few];
-    x.rail += a * r[C.rail1k];
-    if (r[C.bus500] != null) { x.bus += a * r[C.bus500]; x.either += a * r[C.either]; x.busArea += a; }
-    if (r[C.good500] != null) { x.good += a * r[C.good500]; x.goodArea += a; }
-    if (r[C.walk] != null) { x.walk += a * r[C.walk]; x.pm5 += a * r[C.pm5]; x.pm10 += a * r[C.pm10]; x.far += a * r[C.far]; x.pmArea += a; }
+    const a = st.hab ? r[C.area_km2] * r[C.hab] : r[C.area_km2];  // weight of the area shares
+    x.area += r[C.area_km2]; x.hab += r[C.area_km2] * r[C.hab]; x.pop += r[C.pop] || 0; x.stops += r[C.stops]; x.known += r[C.stops_known]; x.few += r[C.stops_few];
+    if (r[kr] != null) { x.rail += a * r[kr]; x.railArea += a; }
+    if (r[kb] != null) { x.bus += a * r[kb]; x.either += a * r[ke]; x.busArea += a; }
+    if (r[kg] != null) { x.good += a * r[kg]; x.goodArea += a; }
+    if (r[kw] != null) { x.walk += a * r[kw]; x.pm5 += a * r[k5]; x.pm10 += a * r[k10]; x.steep += a * r[ks]; x.far += a * r[kf]; x.pmArea += a; }
     if (r[C.stores] != null) { x.stores += r[C.stores]; x.storeArea += a; }
     if (r[C.pm_index] != null) { const w = Math.max(r[C.pop] || 0, 1); x.idx += w * r[C.pm_index]; x.idxW += w; }
   }
@@ -74,6 +80,8 @@ async function main() {
   };
   fillSgg();
   $('urban').onchange = e => { st.urban = e.target.checked; render(); };
+  if (!meta.landcover) { st.hab = false; $('hab').checked = false; $('hab').disabled = true; }
+  $('hab').onchange = e => { st.hab = e.target.checked; render(); };
   GEO = geo;
   initMap(geo);
   render();
@@ -154,7 +162,7 @@ function dongPopup(r) {
   const x = agg([r]);
   const line = (k, v) => `<tr><td>${k}</td><td style="text-align:right">${v}</td></tr>`;
   return `<b>${esc(r[C.sidonm])} ${esc(r[C.sggnm])} ${esc(r[C.name])}</b> <small>(${r[C.type]})</small><table>` +
-    line('주민등록인구', fmt(r[C.pop])) + line('면적', r[C.area_km2].toFixed(2) + '㎢') + line('버스 정류장', fmt(r[C.stops]) + '곳') +
+    line('주민등록인구', fmt(r[C.pop])) + line('면적 (생활권)', r[C.area_km2].toFixed(2) + '㎢ (' + pct(r[C.hab]) + ')') + line('버스 정류장', fmt(r[C.stops]) + '곳') +
     METRICS.map(m => line(m.name, mfmt(m, m.v(x)))).join('') + (r[C.stores] != null ? line('상가업소', fmt(r[C.stores]) + '곳') : '') + (r[C.y2039] != null ? line('20~39세 / 70세 이상', pct(r[C.y2039]) + ' / ' + pct(r[C.o70])) : '') + (U[r[C.sgg]] ? line(`법정 도시지역 면적 (${U[r[C.sgg]].city ? esc(U[r[C.sgg]].city) + ' 전체' : '시군구'})`, pct(U[r[C.sgg]].area)) : '') + (() => { const t = trips(r[C.sgg]); return t.sparse ? line('교통카드 승차 (시군구)', '자료 부족') : t.trip == null ? '' :
       line('주민 1인당 하루 승차 (시군구)', t.trip.toFixed(2)) + line('환승 통행 비중 (시군구)', pct(t.transfer)); })() + '</table>' +
     (r[C.stop_gap] ? '<small>이 시군구는 국토부 파일과 OpenStreetMap 모두 정류장이 크게 부족해 버스 지표를 비워 두었습니다.</small><br>' : '') +
@@ -202,11 +210,12 @@ function zoomTo(rows) {
 
 function render() {
   const m = metric();
-  $('metric-note').textContent = m.note(meta);
+  $('metric-note').textContent = m.note(meta) + (m.idx || m.id === 'few' ? '' : ` [${basis()} 기준]`);
   const rows = D.filter(visible);
   const x = agg(rows);
   $('summary').innerHTML = `<b>${esc(st.sido ? rows[0]?.[C.sidonm] ?? '' : '전국')}${st.urban ? ' 동 지역' : ''}</b>: 행정동 ${fmt(x.n)}곳 · 인구 ${fmt(x.pop)}명 · 면적 ${fmt(x.area)}㎢ · 버스 정류장 ${fmt(x.stops)}곳 · ${esc(m.name)} <b>${mfmt(m, m.v(x))}</b>` +
-    (x.pmArea ? `<br>면적 구성: 도보권 ${pct(x.walk / x.pmArea)} · PM 5분권 ${pct(x.pm5 / x.pmArea)} · PM 10분권 ${pct(x.pm10 / x.pmArea)} · PM으로도 먼 곳 ${pct(x.far / x.pmArea)}` : '');
+    (x.pmArea ? `<br>${basis()} 구성: 도보권 ${pct(x.walk / x.pmArea)} · PM 5분권 ${pct(x.pm5 / x.pmArea)} · PM 10분권 ${pct(x.pm10 / x.pmArea)} · 경사로 PM 곤란 ${pct(x.steep / x.pmArea)} · PM으로도 먼 곳 ${pct(x.far / x.pmArea)}` : '') +
+    (x.area ? ` · 생활권 면적은 전체의 ${pct(x.hab / x.area)}` : '');
   legend(m);
   paintMap();
   renderSgg(rows, m);
@@ -223,7 +232,7 @@ function renderInsights() {
   $('ins-title').textContent = `지역별 인사이트 · ${name}${st.urban ? ' 동 지역' : ''}`;
   const x = agg(scope), li = [];
   const nat = agg(D.filter(r => !st.urban || r[C.type] === '동'));
-  if (x.pmArea) li.push(`땅 면적으로 보면 <b>${pct(x.walk / x.pmArea)}</b>는 걸어서 정류장·역에 닿고, <b>${pct((x.pm5 + x.pm10) / x.pmArea)}</b>는 걷기엔 멀지만 PM으로 10분 안에 닿습니다. PM으로도 먼 곳은 ${pct(x.far / x.pmArea)}입니다.`
+  if (x.pmArea) li.push(`${basis()}으로 보면 <b>${pct(x.walk / x.pmArea)}</b>는 걸어서 정류장·역에 닿고, <b>${pct((x.pm5 + x.pm10) / x.pmArea)}</b>는 걷기엔 멀지만 PM으로 10분 안에 닿습니다. PM 거리지만 경사가 급한 곳 ${pct(x.steep / x.pmArea)}, PM으로도 먼 곳 ${pct(x.far / x.pmArea)}입니다.`
     + (name !== '전국' && nat.pmArea ? ` (전국${st.urban ? ' 동 지역' : ''} PM 10분권 ${pct((nat.pm5 + nat.pm10) / nat.pmArea)})` : ''));
   const top = (list, k, n, f) => list.filter(r => r[k] != null).sort((a, b) => b[k] - a[k]).slice(0, n).map(f).join(', ');
   if (!pickSgg) {
@@ -242,7 +251,7 @@ function renderInsights() {
     if (v != null && sv != null) li.push(`PM 10분 안에 새로 닿는 땅의 비율은 ${pct(v)}로, ${esc(scope[0][C.sidonm])} 평균(${pct(sv)})보다 <b>${v > sv ? '높습니다' : '낮습니다'}</b>.`);
     const dt = top(scope, C.pm_index, 3, r => `${esc(r[C.name])} ${r[C.pm_index].toFixed(0)}`);
     if (dt) li.push(`이 시군구에서 PM 잠재 지수가 높은 읍면동: <b>${dt}</b>`);
-    const dg = top(scope.filter(r => r[C.walk] != null).map(r => Object.assign([...r], { pmv: r[C.pm5] + r[C.pm10] })), 'pmv', 3, r => `${esc(r[C.name])} ${pct(r.pmv)}`);
+    const dg = top(scope.filter(r => r[K('walk')] != null).map(r => Object.assign([...r], { pmv: r[K('pm5')] + r[K('pm10')] })), 'pmv', 3, r => `${esc(r[C.name])} ${pct(r.pmv)}`);
     if (dg) li.push(`PM 10분권 비율이 높은 읍면동: <b>${dg}</b>`);
     const g = goodM.v(x), b = busM.v(x);
     if (g != null) li.push(`노선이 ${meta.good_routes}개 이상인 정류장 도보권 밖 면적은 ${pct(g)}입니다` + (b != null && g - b >= 0.005 ? ` (그 가운데 ${pct(g - b)}p는 정류장은 가까워도 노선이 1~${meta.good_routes - 1}개뿐인 땅).` : '.'));
@@ -267,7 +276,7 @@ function legend(m) {
     `<div class="row"><i class="pt" style="background:#52514e"></i>정류장(노선 ${meta.good_routes}개 이상)</div>` +
     `<div class="row"><i class="pt" style="background:#a3a29c"></i>정류장(노선 수 자료 없음)</div>` +
     `<div class="row"><i class="pt" style="background:#6250d6;border:1.5px solid #fff;outline:1px solid #6250d6"></i>철도역</div>` +
-    ($('show-grid').checked ? '<div class="row" style="margin-top:4px"><b>PM 연계 격자</b></div>' + [['#eb6834', 'PM 5분권'], ['#f6b38f', 'PM 10분권'], ['rgba(82,81,78,.55)', 'PM으로도 먼 곳'], ['rgba(214,213,208,.75)', '정류장 자료 부족']].map(([c, t]) => `<div class="row"><i style="background:${c}"></i>${t}</div>`).join('') + '<div class="row"><small>도보권은 투명</small></div>' : '') +
+    ($('show-grid').checked ? '<div class="row" style="margin-top:4px"><b>PM 연계 격자</b></div>' + [['#eb6834', 'PM 5분권'], ['#f6b38f', 'PM 10분권'], ['rgba(24,118,110,.75)', '경사로 PM 곤란'], ['rgba(82,81,78,.55)', 'PM으로도 먼 곳'], ['rgba(214,213,208,.75)', '정류장 자료 부족'], ['rgba(150,168,128,.45)', '산림·수면 (생활권 밖)']].map(([c, t]) => `<div class="row"><i style="background:${c}"></i>${t}</div>`).join('') + '<div class="row"><small>도보권은 투명</small></div>' : '') +
     ($('show-terrain').checked || $('show-3d').checked ? `<div class="row" style="margin-top:4px"><small>${$('show-terrain').checked ? '지형 음영: 짙을수록 급한 경사(북서쪽 빛 가정). ' : ''}${$('show-3d').checked ? '3D: 높이 1.6배 과장. 오른쪽 위 나침반을 누르면 정북으로 돌아갑니다.' : ''}</small></div>` : '') +
     `<div class="row"><small>정류장은 확대(줌 10 이상)하면 보입니다.</small></div>`;
 }
