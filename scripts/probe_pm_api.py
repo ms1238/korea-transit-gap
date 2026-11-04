@@ -1,6 +1,5 @@
 """Temporary probe: what 국토교통부 (TAGO) 공유 퍼스널모빌리티정보 (apis.data.go.kr/1613000/PersonalMobilityInfo) returns.
-Prints the operations from the data.go.kr catalog and a few calls; the key is never printed."""
-import json
+Reads the swagger embedded in the data.go.kr page, then calls each path; the key is never printed."""
 import os
 import re
 
@@ -15,36 +14,17 @@ def clean(t):
     return t.replace(KEY, "***").replace(requests.utils.quote(KEY, safe=""), "***")
 
 
-ops = []
-for url in ("https://www.data.go.kr/catalog/15117668/openapi.json", "https://www.data.go.kr/data/15117668/openapi.do"):
-    try:
-        r = requests.get(url, timeout=60, headers=UA)
-        print(f"== {url}: HTTP {r.status_code}, {len(r.text)} chars", flush=True)
-        if url.endswith(".json"):
-            d = r.json()
-            print(json.dumps({k: d[k] for k in d if k != "paths"}, ensure_ascii=False)[:1500], flush=True)
-            for path, spec in d.get("paths", {}).items():
-                for method, op in spec.items():
-                    params = [(p.get("name"), p.get("required"), p.get("description", "")[:60]) for p in op.get("parameters", [])]
-                    print(f"  {method.upper()} {path}: {op.get('summary', '')} | params {params}", flush=True)
-                    ops.append(path)
-        else:
-            t = r.text
-            words = sorted(set(re.findall(r"\bget[A-Z]\w{3,60}", t)))
-            print("  get* words:", words, flush=True)
-            ops += ["/" + w for w in words]
-            for kw in ("PersonalMobility", "swagger", "oprtin", "상세기능", "요청주소", "End Point", "Base URL"):
-                for m in list(re.finditer(kw, t))[:4]:
-                    print(f"  [{kw}]", re.sub(r"\s+", " ", t[max(0, m.start() - 150):m.start() + 350]), flush=True)
-            for m in re.findall(r"(?:갱신주기|업데이트 주기|제공기관|비용부과|트래픽)[^<]{0,80}", r.text)[:10]:
-                print("  ", m.strip(), flush=True)
-    except Exception as e:  # noqa: BLE001
-        print(f"== {url}: {e}", flush=True)
+t = requests.get("https://www.data.go.kr/data/15117668/openapi.do", timeout=60, headers=UA).text
+paths = sorted(set(re.findall(r'"(/[A-Za-z]\w+)":\{"get"', t)))
+print("paths:", paths, flush=True)
+for m in re.finditer(r'"oprtinUrl":"([^"]+)","oprtinNm":"([^"]+)"', t):
+    print("operation:", m.group(1), "|", m.group(2), flush=True)
+for m in re.finditer(r'\{"paramtrNm":"(\w+)","paramtrDc":"([^"]*)","paramtrBassValue":"([^"]*)","paramtrTy":"\w*","paramtrDivision":"([^"]*)"', t):
+    print("  param:", m.groups(), flush=True)
+for m in re.finditer(r'"(\w+)":\{"type":"\w+","description":"([^"]{1,40})"\}', t):
+    print("  field:", m.groups(), flush=True)
 
-for op in sorted(set(ops)) or ["/getPMProviderList", "/getPMListByProvider", "/getCtyCodeList"]:
-    for extra in ({}, {"cityCode": "25"}):
-        try:
-            r = requests.get(BASE + op, params={"serviceKey": KEY, "_type": "json", "numOfRows": 10, "pageNo": 1, **extra}, timeout=60, headers=UA)
-            print(f"-- {op} {extra}: HTTP {r.status_code}: {clean(r.text)[:1200]}", flush=True)
-        except Exception as e:  # noqa: BLE001
-            print(f"-- {op} {extra}: {e}", flush=True)
+for p in paths + ["/getPMListByProvider", "/GetPMListByProvider"]:
+    for extra in ({}, {"cityCode": "25"}, {"cityCode": "25", "providerName": "빔"}):
+        r = requests.get(BASE + p, params={"serviceKey": KEY, "_type": "json", "numOfRows": 5, "pageNo": 1, **extra}, timeout=60, headers=UA)
+        print(f"-- {p} {extra}: HTTP {r.status_code}: {re.sub(r'\\s+', ' ', clean(r.text))[:700]}", flush=True)
