@@ -29,5 +29,5 @@ const Beam = (() => {
   const counts = () => { const c = { '직영': 0, '프랜차이즈': 0 }; for (const k of Object.values(kinds)) c[k]++; return c; };
   const legendRows = () => !on() || !data ? '' : '<div class="row" style="margin-top:4px"><b>빔모빌리티 운영지역</b></div>' +
     Object.entries(counts()).map(([k, n]) => `<div class="row"><i style="background:${COL[k]}33;border:2px ${k === '프랜차이즈' ? 'dashed' : 'solid'} ${COL[k]}"></i>${k} ${n}곳</div>`).join('');
-  return { add, kind: g => kinds[g], ready, legendRows, on };
+  return { add, kind: g => kinds[g], loaded: () => !!data?.features?.length, ready, legendRows, on };
 })();

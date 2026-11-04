@@ -107,6 +107,8 @@ async function main() {
   $('legend').onclick = e => { if (e.target.closest('.legend-x')) showLegend(false); };
   showLegend(st.legend);
   $('ins-more').onclick = () => { st.insMore = !st.insMore; renderInsights(); };
+  $('focus-lens').onchange = renderInsights;
+  Beam.ready.then(() => D && renderInsights());
   if (!meta.landcover) { st.hab = false; $('hab').checked = false; $('hab').disabled = true; }
   $('hab').onchange = e => { st.hab = e.target.checked; render(); };
   GEO = geo;
@@ -385,10 +387,12 @@ function render() {
 function renderInsights() {
   const pmM = M('pm'), goodM = M('good'), busM = M('bus');
   const scope = D.filter(r => (!st.urban || r[C.type] === '동') && (!st.sido || r[C.sido] === st.sido) && (!pickSgg || r[C.sgg] === pickSgg));
-  if (!scope.length) { $('insights').innerHTML = ''; return; }
+  if (!scope.length) { $('insights').innerHTML = ''; $('ins-head').innerHTML = ''; return; }
   const name = pickSgg ? `${scope[0][C.sidonm]} ${scope[0][C.sggnm]}` : st.sido ? scope[0][C.sidonm] : '전국';
   $('ins-title').textContent = `지역별 인사이트 · ${name}${st.urban ? ' 동 지역' : ''}`;
   const x = agg(scope), li = [], T = TABS[st.tab];
+  renderHead(scope, x);
+  renderFocus();
   const add = (g, html) => { if (!T.ins || T.ins.includes(g)) li.push(html); };
   const nat = agg(D.filter(r => !st.urban || r[C.type] === '동'));
   if (x.pmArea) add('pm', `${basis()}으로 보면 <b>${pct(x.walk / x.pmArea)}</b>는 걸어서 정류장·역에 닿고, <b>${pct((x.pm5 + x.pm10) / x.pmArea)}</b>는 걷기엔 멀지만 PM으로 10분 안에 닿습니다. PM 거리지만 경사가 급한 곳 ${pct(x.steep / x.pmArea)}, PM으로도 먼 곳 ${pct(x.far / x.pmArea)}입니다.`
@@ -645,6 +649,146 @@ function csv(name, head, rows) {
   const blob = new Blob(['﻿' + [head, ...rows].map(r => r.map(q).join(',')).join('\n')], { type: 'text/csv' });
   const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: name });
   a.click(); URL.revokeObjectURL(a.href);
+}
+
+// ── 주목 지역 Top 10 ─────────────────────────────────────────────────────────────────────────────
+// The candidates follow the selection: 전국 → its 시군구, a 시도 → the 시군구 in it, a 시군구 → its 읍면동.
+// Each lens ranks the candidates on a few factors (tie-aware percentile within the candidates, 0–1) and averages them:
+// A 정책 (교통 공백을 PM이 메울 곳), B 사업 (PM 수요가 있을 곳), 종합 = (A + B) / 2. Factors without data are skipped.
+const FOCUS_F = {
+  either: { n: '버스·철도 도보권 밖 면적', f: pct },
+  pm: { n: 'PM 10분 안에 새로 닿는 면적', f: pct },
+  gapPop: { n: '도보권 밖 거주 추정 인구', f: v => fmt(v) + '명' },
+  pmidx: { n: 'PM 잠재 지수', f: v => (v * 100).toFixed(0) },
+  young: { n: '20·30대 인구', f: v => fmt(v) + '명' },
+  towEase: { n: '견인 부담', f: (v, c) => c.towTxt },
+};
+const LENS = {
+  mix: { name: '종합 (정책 + 사업)', short: '종합' },
+  a: { name: '정책: 교통 공백을 PM이 메울 곳', short: '정책', f: ['either', 'pm', 'gapPop'] },
+  b: { name: '사업: PM 수요가 있을 곳', short: '사업', f: ['pmidx', 'young', 'pm', 'towEase'] },
+};
+const lens = () => $('focus-lens')?.value || 'mix';
+function towBurden(o) {  // higher = heavier: 견인료 (금액 없으면 3만원으로 봄) + 즉시 견인 1만원 상당
+  if (!o?.t) return { v: 0, txt: '견인 없음(부담 낮음)' };
+  const g = graceMin(o.grace);
+  return { v: (o.fee || 30000) + (g === 0 ? 10000 : 0), txt: (o.fee ? won(o.fee) : '견인') + (o.grace ? ' · ' + graceShort(o.grace) : '') };
+}
+// candidates of a level: 시군구 (from their 행정동, so the 동 지역 filter and the area basis apply) or 읍면동
+function focusCands(rows, level) {
+  const eM = M('either'), pM = M('pm');
+  const one = r => { const x = agg([r]), e = eM.v(x); return { e, p: pM.v(x), pop: r[C.pop] || 0, gp: e == null ? null : (r[C.pop] || 0) * e, y: r[C.y2039] == null ? null : (r[C.pop] || 0) * r[C.y2039] }; };
+  if (level === 'dong') return rows.filter(r => !r[C.stop_gap]).map(r => { const o = one(r);
+    return { key: D.indexOf(r), sgg: r[C.sgg], name: r[C.name], either: o.e, pm: o.p, gapPop: o.gp, pmidx: r[C.pm_index] == null ? null : r[C.pm_index] / 100, young: o.y, towEase: null }; });
+  const by = new Map();
+  for (const r of rows) { if (!by.has(r[C.sgg])) by.set(r[C.sgg], []); by.get(r[C.sgg]).push(r); }
+  return [...by.values()].filter(rs => !rs[0][C.stop_gap]).map(rs => {
+    const x = agg(rs), g = rs[0][C.sgg], tb = towBurden(ORD[g]);
+    let gp = 0, y = 0, hasY = false;
+    for (const r of rs) { const o = one(r); gp += o.gp || 0; if (o.y != null) { y += o.y; hasY = true; } }
+    return { key: g, sgg: g, name: `${rs[0][C.sidonm]} ${rs[0][C.sggnm]}`, short: rs[0][C.sggnm], either: eM.v(x), pm: pM.v(x), gapPop: gp,
+      pmidx: M('pmidx').v(x), young: hasY ? y : null, towEase: ORD[g] ? -tb.v : null, towTxt: tb.txt };
+  });
+}
+function focusScore(cands) {
+  const pr = {};
+  for (const k of Object.keys(FOCUS_F)) {
+    const v = cands.map(c => c[k]).filter(v => v != null).sort((a, b) => a - b);
+    if (v.length < 3 || v[0] === v[v.length - 1]) continue;  // a factor that does not vary (e.g. 견인 within one 시군구) says nothing
+    const lo = x => { let a = 0, b = v.length; while (a < b) { const m = (a + b) >> 1; v[m] < x ? a = m + 1 : b = m; } return a; };
+    const hi = x => { let a = 0, b = v.length; while (a < b) { const m = (a + b) >> 1; v[m] <= x ? a = m + 1 : b = m; } return a; };
+    pr[k] = x => x == null ? null : (lo(x) + hi(x)) / 2 / v.length;
+  }
+  for (const c of cands) {
+    c.p = {};
+    for (const k of Object.keys(pr)) c.p[k] = pr[k](c[k]);
+    for (const l of ['a', 'b']) { const ps = LENS[l].f.map(k => c.p[k]).filter(v => v != null); c[l] = ps.length >= 2 ? ps.reduce((a, b) => a + b, 0) / ps.length : null; }
+    c.mix = c.a != null && c.b != null ? (c.a + c.b) / 2 : null;
+  }
+  return cands;
+}
+const ranked = (cands, l) => cands.filter(c => c[l] != null).sort((a, b) => b[l] - a[l]);
+const topPct = (i, n) => Math.max(1, Math.ceil((i + 1) / n * 100));
+function focusWhy(c, l) {  // the two strongest factors of the lens
+  const ks = (l === 'mix' ? [...new Set([...LENS.a.f, ...LENS.b.f])] : LENS[l].f).filter(k => c.p?.[k] != null).sort((a, b) => c.p[b] - c.p[a]).slice(0, 2);
+  return ks.map(k => `${FOCUS_F[k].n} ${FOCUS_F[k].f(c[k], c)}`).join(' · ');
+}
+function focusTags(c) {
+  const t = [];
+  if (c.towTxt == null) return t;
+  if (OPS[c.sgg] === 0) t.push(['warn', '공유 PM 미운영']);
+  const bk = Beam.kind(c.sgg);
+  if (bk) t.push(['beam', '빔 ' + bk]); else if (Beam.loaded()) t.push(['', '빔 미운영']);
+  if (ORD[c.sgg]?.t && graceMin(ORD[c.sgg].grace) === 0) t.push(['warn', '즉시 견인']);
+  return t;
+}
+const nameIn = c => (c.short || c.name);
+function focusScope() {
+  const scope = D.filter(r => (!st.urban || r[C.type] === '동') && (!st.sido || r[C.sido] === st.sido) && (!pickSgg || r[C.sgg] === pickSgg));
+  return { scope, level: pickSgg ? 'dong' : 'sgg', where: pickSgg ? `${scope[0]?.[C.sggnm] ?? ''} 안 읍면동` : st.sido ? `${scope[0]?.[C.sidonm] ?? ''} 안 시군구` : '전국 시군구' };
+}
+let natCache = null;  // national 시군구 scores, for the rank of a picked 시군구
+function natScores() {
+  const k = `${st.urban}|${st.hab}`;
+  if (natCache?.k !== k) natCache = { k, c: focusScore(focusCands(D.filter(r => !st.urban || r[C.type] === '동'), 'sgg')) };
+  return natCache.c;
+}
+function renderFocus() {
+  const el = $('focus-list');
+  if (!el || !D) return;
+  const { scope, level, where } = focusScope(), l = lens();
+  const cands = focusScore(focusCands(scope, level)), rk = ranked(cands, l).slice(0, 10);
+  $('focus-title').textContent = `주목 지역 Top 10 · ${where}${st.urban ? ' (동 지역)' : ''}`;
+  $('focus-note').innerHTML = `${esc(LENS[l].name)} 점수 순. ` + (l === 'mix' ? '정책 점수와 사업 점수의 평균입니다. ' : '') +
+    `점수는 ${where} ${fmt(cands.length)}곳 안에서 매긴 순위(백분위)의 평균(0~100)입니다. <a href="about.html#focus">산식</a>`;
+  el.innerHTML = rk.map((c, i) => `<li><button type="button" data-k="${esc(c.key)}"><span class="fr">${i + 1}</span><span class="fn">${esc(nameIn(c))}` +
+    `<small> ${LENS[l].short} ${(c[l] * 100).toFixed(0)}점</small></span><span class="fw">${focusWhy(c, l)}</span>` +
+    `<span class="ft">${focusTags(c).map(([k, t]) => `<i class="${k}">${esc(t)}</i>`).join('')}</span></button></li>`).join('') || '<li class="note">점수를 낼 자료가 부족합니다.</li>';
+  el.querySelectorAll('button').forEach(b => b.onclick = () => {
+    if (level === 'dong') { $('dong').value = b.dataset.k; $('dong').dispatchEvent(new Event('change')); }
+    else pickSggRow(b.dataset.k);
+  });
+}
+// the conclusion and the basic facts that open 지역별 인사이트
+function renderHead(scope, x) {
+  const l = lens(), L = LENS[l], parts = [];
+  if (pickSgg) {
+    const nat = ranked(natScores(), l), i = nat.findIndex(c => c.sgg === pickSgg), me = nat[i];
+    const sido = nat.filter(c => c.sgg.slice(0, 2) === pickSgg.slice(0, 2)), j = sido.findIndex(c => c.sgg === pickSgg);
+    if (me) {
+      const p = topPct(i, nat.length), verdict = p <= 10 ? '우선 검토' : p <= 30 ? '검토' : '후순위';
+      const acts = [];
+      if (me.a != null && me.a >= 0.7) acts.push(OPS[pickSgg] === 0 ? '공유 PM이 없는 교통 공백 지역: 지자체에 PM 연계 시범사업을 제안할 근거' : '공백이 큰데 공유 PM은 운영 중: 정류장·역 주변 주차구역과 환승 연계 확충을 제안할 곳');
+      if (me.b != null && me.b >= 0.7) acts.push(Beam.loaded() ? (Beam.kind(pickSgg) ? `빔 ${Beam.kind(pickSgg)} 지역: 기기·주차구역 확충 우선` : '빔 미운영: 진출 검토 후보') : 'PM 수요 잠재력이 큰 곳');
+      if (ORD[pickSgg]?.t && (graceMin(ORD[pickSgg].grace) === 0 || (ORD[pickSgg].fee || 0) >= 40000)) acts.push('견인 부담이 큰 곳: 유예시간·견인료 협의 대상');
+      parts.push(`<p class="verdict"><b>결론: ${verdict}</b> · ${L.short} 점수 전국 ${fmt(nat.length)}곳 중 <b>${i + 1}위</b>(상위 ${p}%)` + (j >= 0 ? `, ${esc(scope[0][C.sidonm])} ${sido.length}곳 중 ${j + 1}위` : '') +
+        `. 강점: ${focusWhy(me, l)}.` + (acts.length ? `<br>→ ${acts.join('<br>→ ')}` : '') + '</p>');
+    }
+  } else {
+    const rk = ranked(focusScore(focusCands(scope, 'sgg')), l).slice(0, 3);
+    if (rk.length) parts.push(`<p class="verdict"><b>결론:</b> ${esc(st.sido ? scope[0][C.sidonm] : '전국')}에서 먼저 볼 곳은 <b>${rk.map(c => esc(nameIn(c))).join(', ')}</b>입니다(${L.short} 점수 상위, 아래 Top 10). ${esc(nameIn(rk[0]))}: ${focusWhy(rk[0], l)}.</p>`);
+  }
+  // 기본 현황
+  const sggs = [...new Set(scope.map(r => r[C.sgg]))], e = M('either').v(x), A = st.hab ? x.hab : x.area, chip = [];
+  if (e != null) chip.push(['대중교통 도보권 밖', `${fmt(e * A)}㎢`, `${st.hab ? '생활권' : '전체'} 면적의 ${pct(e)}`]);
+  if (pickSgg) {
+    const fu = FLEET[pickSgg], sv = survey(pickSgg), pu = PARKU[pickSgg], pg = unitGap(pu);
+    chip.push(['PM 기기', fu ? `${fmt(fu.total)}대` : '자료 없음', fu ? `${fu.sgg.length > 1 ? esc(fu.name) + ' 전체 · ' : ''}${esc(fu.date)}` : '']);
+    chip.push(['공유자전거', sv?.bikes != null ? `${fmt(sv.bikes)}대` : '자료 없음', sv?.bikes != null ? `${(sv.pub || sv.pri).sgg.length > 1 ? esc((sv.pub || sv.pri).name) + ' 전체 · ' : ''}${meta2()}` : '']);
+    chip.push(['PM 주차구역', pu ? `${fmt(pu.n)}곳` : '자료 없음', pg ? `1㎢당 ${pg.d.toFixed(1)}곳${pu.sgg.length > 1 ? ' · ' + esc(pu.name) + ' 전체' : ''}` : '']);
+    chip.push(['공유 PM', OPS[pickSgg] == null ? '-' : OPS[pickSgg] ? '운영' : '미운영', opsDate()]);
+    if (Beam.loaded()) chip.push(['빔모빌리티', Beam.kind(pickSgg) || '미운영', '']);
+  } else {
+    const units = [...new Set(sggs.map(g => FLEET[g]).filter(Boolean))].filter(u => !u.partial);
+    chip.push(['PM 기기', units.length ? `${fmt(units.reduce((a, u) => a + u.total, 0))}대` : '자료 없음', units.length ? `자료 있는 ${units.length}개 지역 합계` : '']);
+    const pus = [...new Set(sggs.map(g => PARKU[g]).filter(Boolean))];
+    chip.push(['PM 주차구역', pus.length ? `${fmt(pus.reduce((a, u) => a + u.n, 0))}곳` : '자료 없음', pus.length ? `자료 있는 ${pus.length}개 지역 합계` : '']);
+    const off = sggs.filter(g => OPS[g] === 0).length;
+    chip.push(['공유 PM 미운영', `${off}곳`, `시군구 ${sggs.length}곳 중 · ${opsDate()}`]);
+    if (Beam.loaded()) { const d = sggs.filter(g => Beam.kind(g) === '직영').length, f = sggs.filter(g => Beam.kind(g) === '프랜차이즈').length;
+      chip.push(['빔 운영 시군구', `${d + f}곳`, `직영 ${d} · 프랜차이즈 ${f}`]); }
+  }
+  $('ins-head').innerHTML = parts.join('') + `<div class="chips">${chip.map(([t, v, s]) => `<div class="chip"><span class="kt">${t}</span><b>${v}</b>${s ? `<small>${s}</small>` : ''}</div>`).join('')}</div>`;
 }
 
 main().catch(e => { $('summary').textContent = '자료를 불러오지 못했습니다: ' + e.message; console.error(e); });
