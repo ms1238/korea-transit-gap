@@ -1,0 +1,21 @@
+# temporary: probe the 공유 퍼스널모빌리티정보 API from Actions (the key lives in the secrets); removed before merging
+name: Probe PM API
+on:
+  push:
+    branches: ["claude/eloquent-gauss-g51l74"]
+    paths: [".github/workflows/probe.yml", "scripts/probe_pm_api.py"]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install requests==2.32.3
+      - env:
+          DATA_GO_KR_KEY: ${{ secrets.DATA_GO_KR_KEY }}
+        run: python scripts/probe_pm_api.py
