@@ -9,7 +9,7 @@
 </head>
 <body>
 <header>
-  <nav class="tabs"><a href="index.html" class="on" aria-current="page">PM 대동여지도</a><a href="accidents.html">PM 교통사고 (합성데이터)</a></nav>
+  <nav class="tabs"><a href="#all" data-tab="all" class="on" aria-current="page">종합</a><a href="#pm" data-tab="pm">공백·PM 연계·공급</a><a href="#policy" data-tab="policy">제도·규제</a><a href="accidents.html">안전 (합성데이터)</a><a href="about.html">자료·방법</a></nav>
   <h1>PM 대동여지도</h1>
   <p class="sub">행정동별로 버스 정류장·철도역에서 걸어서 닿기 어려운 면적, 정류장은 있어도 노선이 드문 곳, 그리고 걷기엔 멀지만 PM(개인형 이동장치)으로 5~10분이면 정류장·역에 닿는 곳을 보여 줍니다. <a href="about.html">지표 설명·출처·한계</a></p>
   <p class="sub" id="asof"></p>
@@ -24,7 +24,7 @@
 
 <section class="controls">
   <div class="selects">
-    <label>지표 <select id="metric"></select></label>
+    <label data-tabs="all pm">지표 <select id="metric"></select></label>
     <label>시도 <select id="sido"><option value="">전국</option></select></label>
     <label>시군구 <select id="sgg"><option value="">전체</option></select></label>
     <label>읍면동 <select id="dong"><option value="">전체</option></select></label>
@@ -32,26 +32,26 @@
   <div class="opts">
     <label class="chk"><input type="checkbox" id="urban"> 동 지역만</label>
     <label class="chk" title="ESA WorldCover 토지피복에서 산림·수면·습지를 빼고 시가지·농지·초지만으로 비율을 냅니다"><input type="checkbox" id="hab" checked> 산림·수면 제외 (생활권 면적)</label>
-    <label class="chk" title="서울·경기·천안·김해·화성 동탄·부산 일부 구의 PM 주차구역 위치"><input type="checkbox" id="show-park"> PM 주차구역 보기</label>
+    <label class="chk" data-tabs="all pm" title="서울·경기·천안·김해·화성 동탄·부산 일부 구의 PM 주차구역 위치"><input type="checkbox" id="show-park"> PM 주차구역 보기</label>
     <details class="layers" id="layers">
       <summary>지도 레이어</summary>
-      <div class="opts">
+      <div class="opts" data-tabs="all pm">
         <label class="chk"><input type="checkbox" id="show-stops" checked> 정류장</label>
         <label class="chk"><input type="checkbox" id="show-rail" checked> 철도역</label>
         <label class="chk"><input type="checkbox" id="show-grid"> PM 연계 격자</label>
         <label class="chk"><input type="checkbox" id="show-terrain"> 지형(음영)</label>
         <label class="chk"><input type="checkbox" id="show-3d"> 3D 지형</label>
       </div>
-      <div class="opts grp" title="지자체·시도가 공개한 공유 PM 기기 수와 PM 주차구역. 자료마다 기준일이 다릅니다.">
+      <div class="opts grp" data-tabs="all pm" title="지자체·시도가 공개한 공유 PM 기기 수와 PM 주차구역. 자료마다 기준일이 다릅니다.">
         <span class="gh">PM 현황</span>
         <label class="chk"><input type="checkbox" id="show-fleet"> 기기 수 (인구 1천 명당)</label>
       </div>
-      <div class="opts grp" title="국토교통부 2025년도 첨단모빌리티 현황조사(2024년 말 기준)">
+      <div class="opts grp" data-tabs="all pm policy" title="국토교통부 2025년도 첨단모빌리티 현황조사(2024년 말 기준)">
         <span class="gh">미운영 (2024년 말)</span>
         <label class="chk"><input type="checkbox" id="show-noops"> 공유 PM</label>
         <label class="chk"><input type="checkbox" id="show-nobike"> 공유 자전거</label>
       </div>
-      <div class="opts grp" title="지자체 PM·견인 조례 분석. 광역 조례가 있으면 소속 시군구도 해당으로 봅니다. 여러 개를 켜면 모두 해당하는 시군구만 표시합니다.">
+      <div class="opts grp" data-tabs="all policy" title="지자체 PM·견인 조례 분석. 광역 조례가 있으면 소속 시군구도 해당으로 봅니다. 여러 개를 켜면 모두 해당하는 시군구만 표시합니다.">
         <span class="gh">조례·견인</span>
         <label class="chk"><input type="checkbox" id="ord-o"> PM 조례</label>
         <label class="chk"><input type="checkbox" id="ord-m"> 조례에 이동·견인 근거</label>
@@ -67,8 +67,8 @@
   <button class="legend-btn" id="legend-btn" type="button">범례</button>
   <div class="legend" id="legend"></div>
 </section>
-<p class="note" id="metric-note"></p>
-<p class="summary" id="summary"></p>
+<p class="note" id="metric-note" data-tabs="all pm"></p>
+<p class="summary" id="summary" data-tabs="all pm"></p>
 
 <section>
   <div class="head"><h2 id="sgg-title">시군구 순위</h2><button id="sgg-csv">CSV</button></div>
@@ -76,7 +76,7 @@
   <div class="tablewrap"><table id="sgg-table"></table></div>
 </section>
 
-<section>
+<section data-tabs="all pm">
   <div class="head"><h2 id="dong-title">행정동</h2><button id="dong-csv">CSV</button> <a class="btn" href="data/download/dongs.csv" download>전체 행정동 CSV</a></div>
   <div class="tablewrap"><table id="dong-table"></table></div>
 </section>
