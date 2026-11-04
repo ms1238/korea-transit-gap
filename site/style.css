@@ -64,7 +64,27 @@ td.na { color: var(--muted); }
 .maplibregl-popup-content table { font-size: 12px; }
 .maplibregl-popup-content td { padding: 1px 4px; border: 0; }
 footer { color: var(--muted); font-size: 12px; padding-bottom: 30px; }
+.tabs { display: flex; gap: 4px; margin-bottom: 10px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.tabs a { padding: 6px 12px; color: var(--ink-2); text-decoration: none; border-bottom: 2px solid transparent; white-space: nowrap; font-size: 14px; }
+.tabs a.on { color: var(--ink); border-bottom-color: var(--ink); font-weight: 600; }
+.callout { margin-top: 12px; background: #fff6e8; border: 1px solid #f1c98c; border-radius: 8px; padding: 10px 14px; font-size: 14px; max-width: 1168px; }
+.kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 12px; }
+.kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.kpi .kt { color: var(--ink-2); font-size: 13px; }
+.kpi .kv { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.charts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px 28px; margin-top: 14px; }
+.chart h3 { font-size: 15px; margin: 0 0 6px; }
+.chart .bar { display: grid; grid-template-columns: 150px 1fr 48px; align-items: center; gap: 8px; font-size: 13px; padding: 2px 0; }
+.chart .bl { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chart .bt { background: transparent; height: 12px; }
+.chart .bt i { display: block; height: 12px; background: #d4572a; border-radius: 0 4px 4px 0; min-width: 2px; }
+.chart .bv { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
+@media (max-width: 1200px) { .callout { margin-left: 16px; margin-right: 16px; } }
 @media (max-width: 640px) {
+  .kpis { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .kpi .kv { font-size: 18px; }
+  .charts { grid-template-columns: 1fr; }
+  .chart .bar { grid-template-columns: 110px 1fr 40px; }
   h1 { font-size: 20px; }
   .sub { font-size: 14px; }
   .insights { padding: 10px 12px 4px; font-size: 14px; }

@@ -9,6 +9,7 @@
 </head>
 <body>
 <header>
+  <nav class="tabs"><a href="index.html" class="on" aria-current="page">대중교통 소외지역</a><a href="accidents.html">PM 교통사고 (합성데이터)</a></nav>
   <h1>전국 대중교통 소외지역</h1>
   <p class="sub">행정동별로 버스 정류장·철도역에서 걸어서 닿기 어려운 면적, 정류장은 있어도 노선이 드문 곳, 그리고 걷기엔 멀지만 PM(개인형 이동장치)으로 5~10분이면 정류장·역에 닿는 곳을 보여 줍니다. <a href="about.html">지표 설명·출처·한계</a></p>
   <p class="sub" id="asof"></p>
@@ -39,6 +40,11 @@
         <label class="chk"><input type="checkbox" id="show-grid"> PM 연계 격자</label>
         <label class="chk"><input type="checkbox" id="show-terrain"> 지형(음영)</label>
         <label class="chk"><input type="checkbox" id="show-3d"> 3D 지형</label>
+      </div>
+      <div class="opts grp" title="지자체·시도가 공개한 공유 PM 기기 수와 PM 주차구역. 자료마다 기준일이 다릅니다.">
+        <span class="gh">PM 현황</span>
+        <label class="chk"><input type="checkbox" id="show-fleet"> 기기 수 (인구 1천 명당)</label>
+        <label class="chk"><input type="checkbox" id="show-park"> 주차구역</label>
       </div>
       <div class="opts grp" title="국토교통부 2025년도 첨단모빌리티 현황조사(2024년 말 기준)">
         <span class="gh">미운영 (2024년 말)</span>

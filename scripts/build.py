@@ -445,6 +445,152 @@ def load_ordinance(dongs):
     return out
 
 
+def region_resolver(dongs):
+    """A function '강원 춘천시' / '충남 천안' / '경기 수원시' / '서울특별시' / '광주-남구' → the current 시군구 codes it covers:
+    the 시군구 itself, every 구 of a 시 with 구, a whole 시도 named alone, 인천's former 중구·서구 their successors."""
+    sggs, sido_all = {}, defaultdict(set)
+    for x in dongs:
+        sggs.setdefault((x["sido"], x["sggnm"]), x["sgg"])
+        sido_all[x["sidonm"]].add(x["sgg"])
+
+    def codes(region):
+        region = re.sub(r"\(.*?\)", "", str(region or "")).strip()
+        if region in sido_all:
+            return sorted(sido_all[region])
+        parts = re.split(r"[-\s]", region, maxsplit=1)
+        sido, name = IND_SIDO.get(parts[0]), parts[-1].strip()
+        if (sido, name) in sggs:
+            return [sggs[(sido, name)]]
+        if ACC_OLD.get((sido, name)):
+            return [sggs[(sido, n)] for n in ACC_OLD[(sido, name)] if (sido, n) in sggs]
+        city = [g for (s_, n), g in sggs.items() if s_ == sido and name.endswith("시") and n.startswith(name) and n != name]
+        if city:
+            return sorted(city)
+        bare = [g for (s_, n), g in sggs.items() if s_ == sido and n[:-1] == name and n[-1] in "시군구"]  # '천안' → 천안시
+        if len(bare) == 1:
+            return bare
+        bare = [g for (s_, n), g in sggs.items() if s_ == sido and n.startswith(name + "시") and n != name + "시"]  # '천안' → its 구
+        return sorted(bare)
+    return codes
+
+
+def write_pm_supply(dongs, pop, tree):
+    """PM 기기 수 and 주차구역 (site/data/pm.json): units (one per 지역 of the sources, as current 시군구 codes) with their
+    devices (전동킥보드, 전기자전거, or not told apart), 운영사 (named, else a count), 기준일 and source; the 서울 companies per 구;
+    and the parking points with the 시군구 they fall in. Each source keeps its own 기준일."""
+    codes = region_resolver(dongs)
+    info = {x["sgg"]: (x["sidonm"], x["sggnm"]) for x in dongs}
+    sido_n = collections.Counter(v[0] for v in info.values())
+
+    def unit_name(cs):  # 시도 alone, a 시 with 구 by the 시, else the 시군구
+        sd = {info[g][0] for g in cs}
+        if len(sd) == 1 and len(cs) == sido_n[next(iter(sd))] and len(cs) > 1:
+            return next(iter(sd))
+        names = [info[g][1] for g in cs]
+        if len(names) > 1 and all("시" in n[:-1] for n in names) and len({n[:n.index("시") + 1] for n in names}) == 1:
+            return f"{info[cs[0]][0]} {names[0][:names[0].index('시') + 1]}"
+        return f"{info[cs[0]][0]} " + "·".join(names)
+    gpop = defaultdict(int)
+    for x, p in zip(dongs, pop):
+        gpop[x["sgg"]] += p or 0
+    recs = load("pm_fleet.json")["records"] if os.path.exists(os.path.join(RAW, "pm_fleet.json")) else []
+    path = os.path.join(os.path.dirname(__file__), "static", "pm_fleet_static.csv")
+    seoul_gu = defaultdict(set)
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                num = lambda k: int(r[k]) if r[k] else None
+                recs.append({"region": r["지역"], "operator": None, "ops_n": num("업체수"), "kick": num("전동킥보드"), "bike": num("전기자전거"),
+                             "total": num("합계(구분없음)"), "date": r["기준일"], "source": r["출처"], "company": r["운영사"] or None})
+                if r["지역"] == "서울특별시":
+                    for gu in r["비고(운영구·종류)"].split(","):
+                        seoul_gu[gu.strip()].add(r["운영사"])
+    units, lost = {}, collections.Counter()
+    for r in recs:
+        cs = codes(r["region"])
+        if not cs:
+            lost[r["region"]] += 1
+            continue
+        u = units.setdefault(tuple(cs), {"name": unit_name(cs), "sgg": cs, "pop": sum(gpop[g] for g in cs),
+                                          "kick": 0, "bike": 0, "mixed": 0, "ops": collections.Counter(), "ops_n": 0, "companies": set(),
+                                          "dates": set(), "sources": set()})
+        for k in ("kick", "bike"):
+            u[k] += r[k] or 0
+        u["mixed"] += r["total"] or 0
+        if r["operator"]:
+            u["ops"][r["operator"]] += (r["kick"] or 0) + (r["bike"] or 0) + (r["total"] or 0)
+        if r.get("company"):
+            u["companies"].add(r["company"])
+        u["ops_n"] = max(u["ops_n"], r["ops_n"] or 0)
+        u["dates"].add(r["date"] or "")
+        u["sources"].add(r["source"])
+    fleet = []
+    for u in units.values():
+        n_ops = len(u["ops"]) or len(u["companies"]) or u["ops_n"] or None
+        fleet.append({"name": u["name"], "sgg": u["sgg"], "pop": u["pop"], "kick": u["kick"] or None, "bike": u["bike"] or None,
+                      "mixed": u["mixed"] or None, "total": u["kick"] + u["bike"] + u["mixed"],
+                      "ops": [[o, n] for o, n in u["ops"].most_common()], "n_ops": n_ops,
+                      "date": " · ".join(sorted(d for d in u["dates"] if d)), "source": " · ".join(sorted(u["sources"]))})
+    # 서울: devices only for the whole city; companies per 구
+    sgg_by_name = {(x["sidonm"], x["sggnm"]): x["sgg"] for x in dongs}
+    seoul = {sgg_by_name[("서울특별시", gu)]: len(cs) for gu, cs in seoul_gu.items() if ("서울특별시", gu) in sgg_by_name}
+
+    pts = load("pm_parking.json")["points"] if os.path.exists(os.path.join(RAW, "pm_parking.json")) else []
+    path = os.path.join(os.path.dirname(__file__), "static", "pm_parking_static.csv")
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            pts += [{"region": r["지역"], "name": r["명칭"], "kind": r["형태"], "cap": r["주차대수"] or None, "lon": float(r["경도"]),
+                     "lat": float(r["위도"]), "date": r["기준일"], "source": r["출처"]} for r in csv.DictReader(f)]
+    sources = sorted({(p["source"], p["date"] or "") for p in pts})
+    si = {s_: i for i, s_ in enumerate(sources)}
+    di = assign(tree, np.array([p["lon"] for p in pts]), np.array([p["lat"] for p in pts])) if pts else []
+    park = [[round(p["lon"], 6), round(p["lat"], 6), dongs[i]["sgg"] if i >= 0 else None, p["name"] or "", p["kind"] or "",
+             str(p["cap"] or ""), si[(p["source"], p["date"] or "")]] for p, i in zip(pts, di)]
+    with open(os.path.join(OUT, "pm.json"), "w", encoding="utf-8") as f:
+        json.dump({"fleet": fleet, "seoul_companies": seoul, "parking": park, "parking_sources": sources},
+                  f, ensure_ascii=False, separators=(",", ":"))
+    print(f"PM fleet: {len(fleet)} units, {sum(u['total'] for u in fleet):,} devices; not mapped: "
+          + (", ".join(f"{k} {v}" for k, v in lost.items()) or "-")
+          + f"; parking: {len(park)} points ({sum(p[2] is None for p in park)} outside every 행정동) from "
+          + ", ".join(f"{s_} {d_}" for s_, d_ in sources), flush=True)
+
+
+ACC_OLD = {("28", "중구"): ("제물포구", "영종구"), ("28", "서구"): ("서해구", "검단구")}  # 인천 구 before the 2026 reorganization
+
+
+def write_accidents(dongs, pop):
+    """site/data/accidents.json from raw/pm_accidents.json (도로교통공단 PM 교통사고 합성데이터): the regions as units of
+    current 시군구 ('경기-수원시' covers every 구 of 수원시; 인천's former 중구·서구 their successor 구; 광주 the 구 of
+    전남광주통합특별시) with their population, and one compact row per record."""
+    if not os.path.exists(os.path.join(RAW, "pm_accidents.json")):
+        return
+    d = load("pm_accidents.json")
+    resolve = region_resolver(dongs)
+    gpop = defaultdict(int)
+    for x, p in zip(dongs, pop):
+        gpop[x["sgg"]] += p or 0
+    units, index, lost = [], {}, collections.Counter()
+    rows = []
+    for r in d["rows"]:
+        region = str(r.get("발생지역") or "")
+        if region not in index:
+            codes = resolve(region)
+            index[region] = len(units) if codes else None
+            if codes:
+                units.append({"name": region.replace("-", " "), "sgg": sorted(codes), "pop": sum(gpop[g] for g in codes)})
+        if index[region] is None:
+            lost[region] += 1
+            continue
+        rows.append([index[region], r.get("사고유형"), r.get("시간대"), r.get("가해자연령대"), r.get("가해자성별"),
+                     int(r.get("사망자수") or 0), int(r.get("중상자수") or 0), int(r.get("경상자수") or 0), int(r.get("부상신고자수") or 0)])
+    with open(os.path.join(OUT, "accidents.json"), "w", encoding="utf-8") as f:
+        json.dump({"meta": {"title": d.get("title"), "date": d.get("date"), "n": len(rows)}, "units": units,
+                   "cols": ["unit", "type", "time", "age", "sex", "dead", "serious", "minor", "report"], "rows": rows},
+                  f, ensure_ascii=False, separators=(",", ":"))
+    print(f"PM accidents ({d.get('title')}): {len(rows)} records in {len(units)} units; not mapped: "
+          + (", ".join(f"{k} {v}" for k, v in lost.items()) or "-"), flush=True)
+
+
 def main():
     os.makedirs(os.path.join(OUT, "download"), exist_ok=True)
     adm = load("admin_dong.json")
@@ -747,6 +893,8 @@ def main():
                     "정류장위치자료부족", "상가업소수", "PM잠재지수", "20~39세비중", "70세이상비중", "생활권면적비중"]
                    + ["전체면적_" + x for x in share] + ["생활권면적_" + x for x in share])
         w.writerows(rows)
+    write_accidents(dongs, pop)
+    write_pm_supply(dongs, pop, tree)
     for name in ("stats.json", "dongs.geojson", "stops.json", "stations.json", "pmgrid.png"):
         print(f"  {name}: {os.path.getsize(os.path.join(OUT, name)) / 1e6:.1f} MB", flush=True)
 
