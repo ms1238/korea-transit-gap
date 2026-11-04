@@ -1,4 +1,7 @@
 'use strict';
+// cache-busting: the deploy stamps this script's URL with ?v=<commit>; the data files get the same stamp
+const DV = (document.currentScript?.src.match(/[?&]v=([\w-]+)/) || [])[1];
+const dv = u => DV ? `${u}?v=${DV}` : u;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmt = n => n == null ? '-' : Math.round(n).toLocaleString('ko-KR');
@@ -68,8 +71,8 @@ const visible = r => (!st.urban || r[C.type] === '동') && (!st.sido || r[C.sido
 const cls = v => v == null ? -1 : Math.min(4, Math.floor(v * 5));
 
 async function main() {
-  const [stats, geo, pms] = await Promise.all([fetch('data/stats.json').then(r => r.json()), fetch('data/dongs.geojson').then(r => r.json()),
-    fetch('data/pm.json').then(r => r.ok ? r.json() : null).catch(() => null)]);
+  const [stats, geo, pms] = await Promise.all([fetch(dv('data/stats.json')).then(r => r.json()), fetch(dv('data/dongs.geojson')).then(r => r.json()),
+    fetch(dv('data/pm.json')).then(r => r.ok ? r.json() : null).catch(() => null)]);
   if (pms) PMS = pms;
   // each 시군구 shows the newest figures covering it (build.py picks them); a unit can cover several 시군구 (a 시 with 구, a 시도)
   for (const [g, i] of Object.entries(PMS.fleet_by_sgg || {})) FLEET[g] = PMS.fleet[i];
@@ -168,7 +171,7 @@ function initMap(geo) {
     const font = map.getStyle().layers.find(l => l.type === 'symbol' && l.layout?.['text-font'])?.layout['text-font'];
     if (map.getStyle().glyphs && font) {  // 견인료 labels at the 시군구 centres (the basemap's font, which has Hangul)
       map.addSource('fees', { type: 'geojson', data: { type: 'FeatureCollection', features: feePoints() } });
-      map.addLayer({ id: 'fees', type: 'symbol', source: 'fees', minzoom: 6.5, filter: ['in', ['get', 'sgg'], ['literal', []]],
+      map.addLayer({ id: 'fees', type: 'symbol', source: 'fees', minzoom: 6.5, filter: ['in', ['get', 'key'], ['literal', []]],
         layout: { 'text-field': ['get', 'label'], 'text-font': font, 'text-size': ['interpolate', ['linear'], ['zoom'], 6.5, 10, 11, 14] },
         paint: { 'text-color': '#2b1d57', 'text-halo-color': '#ffffff', 'text-halo-width': 1.6 } });
     }
@@ -205,7 +208,7 @@ function initMap(geo) {
     });
     map.on('mouseenter', 'dong-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
     map.on('mouseleave', 'dong-fill', () => { map.getCanvas().style.cursor = ''; });
-    const [stops, rail] = await Promise.all([fetch('data/stops.json').then(r => r.json()), fetch('data/stations.json').then(r => r.json())]);
+    const [stops, rail] = await Promise.all([fetch(dv('data/stops.json')).then(r => r.json()), fetch(dv('data/stations.json')).then(r => r.json())]);
     map.addSource('stops', { type: 'geojson', data: { type: 'FeatureCollection', features: stops.map(s => ({ type: 'Feature', properties: { r: s[2], o: s[3] }, geometry: { type: 'Point', coordinates: [s[0], s[1]] } })) } });
     map.addLayer({ id: 'stops', type: 'circle', source: 'stops', minzoom: 10, paint: {
       'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 2, 15, 5],
@@ -219,7 +222,7 @@ function initMap(geo) {
       new maplibregl.Popup({ maxWidth: '240px' }).setLngLat(e.lngLat).setHTML(`<b>버스 정류장</b><br>정차 노선 ${p.r < 0 ? '자료 없음' : p.r + '개'}${p.o ? '<br><small>위치: OpenStreetMap (국토부 파일에 없는 지역)</small>' : ''}`).addTo(map);
     });
     map.on('click', 'rail', e => new maplibregl.Popup({ maxWidth: '240px' }).setLngLat(e.lngLat).setHTML(`<b>${esc(e.features[0].properties.n)}</b><br>철도역`).addTo(map));
-    map.addSource('pmgrid', { type: 'image', url: 'data/pmgrid.png', coordinates: [meta.grid_bounds[0], [meta.grid_bounds[1][0], meta.grid_bounds[0][1]], meta.grid_bounds[1], [meta.grid_bounds[0][0], meta.grid_bounds[1][1]]] });
+    map.addSource('pmgrid', { type: 'image', url: dv('data/pmgrid.png'), coordinates: [meta.grid_bounds[0], [meta.grid_bounds[1][0], meta.grid_bounds[0][1]], meta.grid_bounds[1], [meta.grid_bounds[0][0], meta.grid_bounds[1][1]]] });
     map.addLayer({ id: 'pmgrid', type: 'raster', source: 'pmgrid', paint: { 'raster-opacity': 0.85, 'raster-resampling': 'nearest' } }, 'stops');
     for (const [id, layer] of [['show-stops', 'stops'], ['show-rail', 'rail'], ['show-grid', 'pmgrid']]) {
       const set = () => { map.setLayoutProperty(layer, 'visibility', $(id).checked ? 'visible' : 'none'); if (id === 'show-grid') legend(metric()); };
@@ -248,11 +251,16 @@ function feePoints() {
     let x = 0, y = 0, n = 0;
     const walk = c => typeof c[0] === 'number' ? (x += c[0], y += c[1], n++) : c.forEach(walk);
     walk(f.geometry.coordinates);
-    const b = by[r[C.sgg]] ??= { x: 0, y: 0, w: 0, fee: o.fee, planned: o.planned, grace: o.grace };
+    // a 시 with 구 (고양시덕양구·일산동구·일산서구) gets one label for the whole 시, so its 구 labels do not crowd each other out
+    const city = /^(.+시).+구$/.exec(r[C.sggnm])?.[1], key = (city ? r[C.sido] + city : r[C.sgg]) + '|' + o.fee + '|' + (o.grace || '');
+    const b = by[key] ??= { x: 0, y: 0, w: 0, fee: o.fee, planned: o.planned, grace: o.grace, sggs: new Set() };
+    b.sggs.add(r[C.sgg]);
     b.x += x / n * r[C.area_km2]; b.y += y / n * r[C.area_km2]; b.w += r[C.area_km2];
   });
-  return Object.entries(by).map(([sgg, b]) => ({ type: 'Feature', properties: { sgg, label: won(b.fee) + (b.planned ? '(예정)' : '') + (b.grace ? '\n' + graceShort(b.grace) : '') }, geometry: { type: 'Point', coordinates: [b.x / b.w, b.y / b.w] } }));
+  FEEG = Object.fromEntries(Object.entries(by).map(([k, b]) => [k, [...b.sggs]]));
+  return Object.entries(by).map(([key, b]) => ({ type: 'Feature', properties: { key, label: won(b.fee) + (b.planned ? '(예정)' : '') + (b.grace ? '\n' + graceShort(b.grace) : '') }, geometry: { type: 'Point', coordinates: [b.x / b.w, b.y / b.w] } }));
 }
+let FEEG = {};  // fee label key → its 시군구
 // the metric colours fade while an overlay that colours 시군구 (조례·견인, PM 기기 수) is on, so its colours read cleanly
 // show the tab's controls and sections; 제도·규제 starts with the 견인료 map when no 조례 condition is ticked
 let autoOrd = false;
@@ -283,7 +291,7 @@ function paintOrd() {
   if (!map || !map.getLayer('ord')) return;
   D.forEach((r, i) => map.setFeatureState({ source: 'dongs', id: i }, { ord: ordClass(r[C.sgg]) }));
   fadeMetric();
-  if (map.getLayer('fees')) map.setFilter('fees', ['in', ['get', 'sgg'], ['literal', $('ord-t').checked ? Object.keys(ORD).filter(ordHit) : []]]);
+  if (map.getLayer('fees')) map.setFilter('fees', ['in', ['get', 'key'], ['literal', $('ord-t').checked ? Object.keys(FEEG).filter(k => FEEG[k].some(ordHit)) : []]]);
   legend(metric());
   renderInsights();
 }
