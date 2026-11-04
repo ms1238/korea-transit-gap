@@ -438,7 +438,9 @@ def load_ordinance(dongs):
                 if f_:
                     fee, planned, src = f_, p_, x["지자체명"]
                     break
-        out[d["sgg"]] = {"o": flag("PM조례_유무"), "m": flag("이동조치규정_유무"), "t": flag("견인조례_PM항목"),
+        lv = lambda k: 2 if r and yes(r[k]) else 1 if any(yes(x[k]) for x in ws) else 0  # 2 기초 자체, 1 광역 조례만, 0 없음
+        out[d["sgg"]] = {"lv": {"o": lv("PM조례_유무"), "m": lv("이동조치규정_유무"), "t": lv("견인조례_PM항목"), "b": lv("자전거 견인 여부")},
+                         "o": flag("PM조례_유무"), "m": flag("이동조치규정_유무"), "t": flag("견인조례_PM항목"),
                          "b": flag("자전거 견인 여부"), "fee": fee, "planned": planned, "src": src,
                          "own": [n for n in ((r or {}).get("PM조례명"), (r or {}).get("견인조례명")) if n],
                          "wide": [[x["지자체명"], *[n for n in (x.get("PM조례명"), x.get("견인조례명")) if n]] for x in ws]}
@@ -451,8 +453,11 @@ def load_ordinance(dongs):
             if not codes:
                 print(f"  towing practice: {r['지역']} not mapped", flush=True)
             for g in codes:
-                o = out.setdefault(g, {"o": 0, "m": 0, "t": 0, "b": 0, "fee": None, "planned": False, "src": None, "own": [], "wide": []})
+                o = out.setdefault(g, {"lv": {"o": 0, "m": 0, "t": 0, "b": 0}, "o": 0, "m": 0, "t": 0, "b": 0, "fee": None,
+                                       "planned": False, "src": None, "own": [], "wide": []})
                 t = int(r["PM견인"] == "1")
+                # whose towing it is: a 광역 (서울특별시, 대구광역시 …, its every 구) or the 시군구 itself
+                o["lv"]["t"] = 0 if not t else 1 if re.search(r"(특별시|광역시|도)$", r["지역"].strip()) else 2
                 o.update(t=t, fee=int(r["견인료"]) if t and r["견인료"] else None, planned=False, src=r["지역"] if t else None,
                          grace=r["유예시간"] or None, note=r["비고"] or None, practice=r["출처"])
         print(f"towing practice: {len(prs)} regions, {sum(len(c) for _, c in prs)} 시군구", flush=True)
