@@ -598,8 +598,19 @@ def write_pm_supply(dongs, pop, tree):
     path = os.path.join(os.path.dirname(__file__), "static", "pm_parking_static.csv")
     if os.path.exists(path):
         with open(path, encoding="utf-8") as f:
-            pts += [{"region": r["지역"], "name": r["명칭"], "kind": r["형태"], "cap": r["주차대수"] or None, "lon": float(r["경도"]),
-                     "lat": float(r["위도"]), "date": r["기준일"], "source": r["출처"]} for r in csv.DictReader(f)]
+            local = [{"region": r["지역"], "name": r["명칭"], "kind": r["형태"], "cap": r["주차대수"] or None, "lon": float(r["경도"]),
+                      "lat": float(r["위도"]), "date": r["기준일"], "source": r["출처"], "local": True} for r in csv.DictReader(f)]
+        # a city's own list (the newest, shared by the user) replaces what a provincial table has for that city
+        mine = {tuple(codes(p["region"])) for p in local}
+        n0 = len(pts)
+        pts = [p for p in pts if tuple(codes(p["region"])) not in mine] + local
+        print(f"  parking: {n0 - (len(pts) - len(local))} provincial zones replaced by the cities' own lists", flush=True)
+    # a zone with coordinates whose source names only a 시 with 구 goes to the 구 it lies in
+    di = assign(tree, np.array([p["lon"] or 0 for p in pts]), np.array([p["lat"] or 0 for p in pts])) if pts else []
+    for p, i in zip(pts, di):
+        cs = codes(p["region"])
+        if p.get("local") and len(cs) > 1 and p["lon"] and i >= 0 and dongs[i]["sgg"] in cs:
+            p["sgg"] = dongs[i]["sgg"]
     sources = sorted({(p["source"], p["date"] or "") for p in pts})
     si = {s_: i for i, s_ in enumerate(sources)}
     # counts per 지역 unit (a 시 with 구 as one, since a source names only the 시 and some points lack coordinates)
@@ -607,7 +618,7 @@ def write_pm_supply(dongs, pop, tree):
     for g in (g for region in PARKING_WHOLE for g in codes(region)):
         punits[(g,)] = {"name": unit_name([g]), "sgg": [g], "n": 0, "dates": set(), "sources": set()}
     for p in pts:
-        cs = codes(p["region"])
+        cs = [p["sgg"]] if p.get("sgg") else codes(p["region"])
         if not cs:
             plost[p["region"]] += 1
             continue

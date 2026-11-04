@@ -171,7 +171,7 @@ function initMap(geo) {
     D.forEach((r, i) => { const u = FLEET[r[C.sgg]]; map.setFeatureState({ source: 'dongs', id: i }, { fl: u && u.pop ? FLB.findIndex(b => u.total / u.pop * 1000 < b) : -1 }); });
     map.addSource('pmpark', { type: 'geojson', data: { type: 'FeatureCollection', features: PMS.parking.map((p, i) => ({ type: 'Feature', properties: { i }, geometry: { type: 'Point', coordinates: [p[0], p[1]] } })) } });
     map.addLayer({ id: 'pmpark', type: 'circle', source: 'pmpark', layout: { visibility: 'none' }, paint: {
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 1.5, 10, 3, 15, 6], 'circle-color': '#1f6f5c',
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 6, 2.2, 10, 3.5, 15, 6], 'circle-color': '#1f6f5c',
       'circle-stroke-color': '#ffffff', 'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 8, 0, 12, 1] } });
     map.on('click', 'pmpark', e => {
       const p = PMS.parking[e.features[0].properties.i], s = PMS.parking_sources[p[5]];

@@ -4,12 +4,15 @@ scripts/static/pm_parking_static.csv:
   (several 구 per row, so only the 서울 total and the number of companies per 구 can be told)
 - 서울시 PM 주차구역 (2026년 3월, xlsx from the 서울 map service): 구명, 콘텐츠명, 주차구역 형태, 좌표; rows with 사용유무 Y
 - 부산 동래구·남구·수영구·연제구 공유 PM 현황 (PDF, typed in below): 업체수, 운영대수, and 남구's 9 주차구역
+- 화성시 동탄 PM 주차구역 (xlsx, one sheet per 동탄 1~9동, 2024 and 2025 installations side by side): 관리번호, 주변주소,
+  상세위치, 좌표 ('lat,lon'), 설치수량; optional third argument
 
 Run on a PC when the files are updated (needs openpyxl):
-    python scripts/pm_static_csv.py 서울_기기현황.csv 서울_주차구역.xlsx
+    python scripts/pm_static_csv.py 서울_기기현황.csv 서울_주차구역.xlsx [화성_동탄_주차구역.xlsx]
 """
 import csv
 import os
+import re
 import sys
 
 import openpyxl
@@ -57,6 +60,16 @@ def main():
             out.append([f"서울 {r[5]}", r[2], r[3] or "", "", float(r[10]), float(r[11]), SEOUL_PARKING[1], SEOUL_PARKING[0]])
     for name, lat, lon, cap in NAMGU_PARKING:
         out.append(["부산 남구", name, "", cap, lon, lat, "2024-12-31", "부산광역시 남구 PM 주차구역 설치 현황"])
+    if len(sys.argv) > 3:  # 화성시 동탄: a 2024 block (columns A–G) and a 2025 block (I–O) per 동 sheet
+        wb = openpyxl.load_workbook(sys.argv[3], read_only=True, data_only=True)
+        for ws in wb.worksheets[1:]:
+            for r in list(ws.iter_rows(values_only=True))[2:]:
+                for off, year in ((0, "2024"), (8, "2025")):
+                    c = r[off:off + 7]
+                    m = re.findall(r"\d+\.\d+", str(c[4] or "")) if len(c) >= 6 else []
+                    if len(m) == 2:
+                        out.append(["경기 화성시", f"{c[3] or c[2]} ({c[1]})", f"{year}년 설치" + (f" · {c[6]}" if c[6] else ""), c[5] or "",
+                                    float(m[1]), float(m[0]), "2025", "화성시 동탄 PM 주차구역 (2024·2025년 설치)"])
     with open(os.path.join(STATIC, "pm_parking_static.csv"), "w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
         w.writerow(["지역", "명칭", "형태", "주차대수", "경도", "위도", "기준일", "출처"])
