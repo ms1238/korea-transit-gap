@@ -33,6 +33,10 @@
     <label class="chk"><input type="checkbox" id="urban"> 동 지역만</label>
     <label class="chk" title="ESA WorldCover 토지피복에서 산림·수면·습지를 빼고 시가지·농지·초지만으로 비율을 냅니다"><input type="checkbox" id="hab" checked> 산림·수면 제외 (생활권 면적)</label>
     <label class="chk" data-tabs="all pm" title="서울·경기·천안·김해·화성 동탄·부산 일부 구의 PM 주차구역 위치"><input type="checkbox" id="show-park"> PM 주차구역 보기</label>
+    <label class="chk" title="빔모빌리티 운영 시군구: 직영은 파란 실선, 프랜차이즈는 청록 점선"><input type="checkbox" id="show-beam"> 빔 운영지역</label>
+    <span class="chk young" title="20~39세 주민이 많은 읍면동: 전국 읍면동 가운데 순위 (주민등록 인구)">20·30대 상위
+      <label class="chk"><input type="checkbox" id="young-10"> 10%</label><label class="chk"><input type="checkbox" id="young-20"> 20%</label><label class="chk"><input type="checkbox" id="young-30"> 30%</label>
+      <select id="young-basis" aria-label="20·30대 순위 기준"><option value="n">인구수</option><option value="s">비중</option></select></span>
     <details class="layers" id="layers">
       <summary>지도 레이어</summary>
       <div class="opts" data-tabs="all pm">
@@ -85,6 +89,8 @@
   <p>자료: 국토교통부 전국 버스정류장 위치정보·정류장별 정차 노선수(공공데이터포털), 행정안전부 주민등록 인구, 통계청 행정동 경계(vuski/admdongkor), © OpenStreetMap 기여자, ESA WorldCover 2021(CC BY 4.0), Mapzen Terrain Tiles. 자세한 내용은 <a href="about.html">설명 페이지</a>.</p>
 </footer>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="beam.js"></script>
+<script src="young.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

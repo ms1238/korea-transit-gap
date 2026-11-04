@@ -18,15 +18,15 @@ const ORDER = {  // fixed category orders (time and age read in their natural or
   age: ['10-14세', '15-19세', '20-24세', '25-29세', '30-34세', '35-39세', '40-44세', '45-49세', '50-54세', '55-59세', '60-64세', '65-69세', '70세이상', '불명'],
   sex: ['남', '여', '기타불명'],
 };
-let A, C, U, D, GEO, map, sort = { k: 'v', asc: false }, shown = [];
-const st = { metric: 'n', sido: '' };
+let A, C, U, D, SCI, GEO, map, sort = { k: 'v', asc: false }, shown = [];
+const st = { metric: 'n', sido: '', unit: '' };
 let unitOf = {};  // dong index → unit index
 
 async function main() {
   const [acc, stats, geo] = await Promise.all(['data/accidents.json', 'data/stats.json', 'data/dongs.geojson'].map(u => fetch(u).then(r => r.json())));
   A = acc; U = acc.units; D = stats.rows; GEO = geo;
   C = Object.fromEntries(acc.cols.map((c, i) => [c, i]));
-  const SC = Object.fromEntries(stats.cols.map((c, i) => [c, i]));
+  const SC = SCI = Object.fromEntries(stats.cols.map((c, i) => [c, i]));
   const sggUnit = {};
   U.forEach((u, i) => { u.sido = null; for (const g of u.sgg) sggUnit[g] = i; });
   D.forEach((r, i) => { const k = sggUnit[r[SC.sgg]]; if (k != null) { unitOf[i] = k; U[k].sido ??= r[SC.sido]; U[k].sidonm ??= r[SC.sidonm]; } });
@@ -34,7 +34,9 @@ async function main() {
   $('asof').textContent = `${acc.meta.title || ''} · 공개본 기준일 ${d ? d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6) : '-'} · ${fmt(acc.meta.n)}건 (기록이 다루는 기간은 자료에 적혀 있지 않습니다)`;
   for (const [c, n] of [...new Map(U.map(u => [u.sido, u.sidonm])).entries()].sort((a, b) => a[0].localeCompare(b[0]))) $('sido').add(new Option(n, c));
   $('metric').onchange = e => { st.metric = e.target.value; render(); };
-  $('sido').onchange = e => { st.sido = e.target.value; render(); zoom(); };
+  $('sido').onchange = e => { st.sido = e.target.value; st.unit = ''; fillUnits(); render(); zoom(); };
+  $('unit').onchange = e => { st.unit = e.target.value; render(); zoom(); };
+  fillUnits();
   const showLegend = on => { $('legend').hidden = !on; $('legend-btn').hidden = on; };
   $('legend-btn').onclick = () => showLegend(true);
   $('legend').onclick = e => { if (e.target.closest('.legend-x')) showLegend(false); };
@@ -43,7 +45,21 @@ async function main() {
   render();
 }
 
-const scopeRows = () => A.rows.filter(r => !st.sido || U[r[C.unit]].sido === st.sido);
+const scopeRows = () => A.rows.filter(r => st.unit !== '' ? r[C.unit] === +st.unit : !st.sido || U[r[C.unit]].sido === st.sido);
+// the 시군구 list follows the 시도 (all of them, by 시도 then name, when 전국)
+function fillUnits() {
+  const sel = $('unit'), sidoName = Object.fromEntries([...$('sido').options].map(o => [o.value, o.text]));
+  sel.length = 1;
+  U.map((u, i) => ({ u, i })).filter(({ u }) => u.sido && (!st.sido || u.sido === st.sido))
+    .sort((a, b) => a.u.sido.localeCompare(b.u.sido) || a.u.name.localeCompare(b.u.name, 'ko'))
+    .forEach(({ u, i }) => sel.add(new Option(st.sido ? u.name.replace(/^\S+ /, '') : u.name, i)));
+  sel.value = st.unit;
+}
+function pick(k) {  // a 시군구 picked on the map: its 시도 and itself in the selects
+  if (k == null) return;
+  if (st.sido !== U[k].sido) { st.sido = U[k].sido; $('sido').value = st.sido; }
+  st.unit = String(k); fillUnits(); render();
+}
 function agg(rows) {
   const x = { n: rows.length, dead: 0, serious: 0, minor: 0, report: 0 };
   for (const r of rows) { x.dead += r[C.dead]; x.serious += r[C.serious]; x.minor += r[C.minor]; x.report += r[C.report]; }
@@ -58,7 +74,8 @@ function perUnit() {
 
 function render() {
   const rows = scopeRows(), x = agg(rows), m = METRICS[st.metric];
-  $('kpis').innerHTML = [['기록', x.n], ['사망자', x.dead], ['중상자', x.serious], ['경상자', x.minor], ['부상신고자', x.report]]
+  const where = st.unit !== '' ? U[+st.unit].name : st.sido ? $('sido').selectedOptions[0].text : '전국';
+  $('kpis').innerHTML = `<div class="kpi"><div class="kt">범위</div><div class="kv" style="font-size:16px">${esc(where)}</div></div>` + [['기록', x.n], ['사망자', x.dead], ['중상자', x.serious], ['경상자', x.minor], ['부상신고자', x.report]]
     .map(([t, v]) => `<div class="kpi"><div class="kt">${t}</div><div class="kv">${fmt(v)}</div></div>`).join('');
   bars('c-type', rows, C.type, null);
   bars('c-time', rows, C.time, ORDER.time);
@@ -89,7 +106,7 @@ function paint(units, m) {
   D.forEach((_, i) => {
     const u = units[unitOf[i]];
     const k = u && u.n ? breaks.filter(b => u.v > b).length : -1;
-    map.setFeatureState({ source: 'dongs', id: i }, { c: k, hide: !!st.sido && D[i][2] !== st.sido });  // column 2: 시도 code
+    map.setFeatureState({ source: 'dongs', id: i }, { c: k, hide: st.unit !== '' ? unitOf[i] !== +st.unit : !!st.sido && D[i][2] !== st.sido });  // column 2: 시도 code
   });
 }
 function legend(m) {
@@ -97,7 +114,7 @@ function legend(m) {
   const lab = [`${f(breaks[0])} 이하`, ...[1, 2, 3].map(i => `${f(breaks[i - 1])}~${f(breaks[i])}`), `${f(breaks[3])} 초과`];
   $('legend').innerHTML = `<div class="t"><span>${esc(m.name)}</span><button class="legend-x" type="button" aria-label="범례 닫기">×</button></div>` +
     RAMP.map((c, i) => `<div class="row"><i style="background:${c}"></i>${lab[i]}</div>`).join('') +
-    `<div class="row"><i style="background:${NONE}"></i>기록 없음</div><div class="row"><small>합성데이터: 경향 비교용</small></div>`;
+    `<div class="row"><i style="background:${NONE}"></i>기록 없음</div><div class="row"><small>합성데이터: 경향 비교용</small></div>` + Beam.legendRows() + Young.legendRows();
 }
 
 function initMap() {
@@ -111,11 +128,15 @@ function initMap() {
       'fill-color': ['match', ['coalesce', ['feature-state', 'c'], -1], 0, RAMP[0], 1, RAMP[1], 2, RAMP[2], 3, RAMP[3], 4, RAMP[4], NONE],
       'fill-opacity': ['case', ['boolean', ['feature-state', 'hide'], false], 0.08, 0.8] } }, before);
     render();
+    Beam.add(map, () => legend(METRICS[st.metric]));
+    Young.init(map, D, SCI, () => legend(METRICS[st.metric]));
     map.on('click', 'fill', e => {
       const k = unitOf[e.features[0].id], u = k != null ? perUnit()[k] : null;
-      const html = u ? `<b>${esc(u.name)}</b> <small>(합성데이터)</small><table>` + [['기록', u.n], ['인구 10만 명당', u.pop ? (u.n / u.pop * 1e5).toFixed(1) : '-'], ['사망 · 중상', `${u.dead} · ${u.serious}`], ['경상 · 부상신고', `${u.minor} · ${u.report}`]]
+      const bk = k != null && U[k].sgg.map(g => Beam.kind(g)).find(Boolean);
+      const html = u ? `<b>${esc(u.name)}</b> <small>(합성데이터)</small>${bk ? `<br><small>빔모빌리티 ${bk}</small>` : ''}<table>` + [['기록', u.n], ['인구 10만 명당', u.pop ? (u.n / u.pop * 1e5).toFixed(1) : '-'], ['사망 · 중상', `${u.dead} · ${u.serious}`], ['경상 · 부상신고', `${u.minor} · ${u.report}`]]
         .map(([a, b]) => `<tr><td>${a}</td><td style="text-align:right">${typeof b === 'number' ? fmt(b) : b}</td></tr>`).join('') + '</table>' : '기록 없음';
       new maplibregl.Popup({ maxWidth: '260px' }).setLngLat(e.lngLat).setHTML(html).addTo(map);
+      pick(k);
     });
   });
 }
@@ -123,7 +144,7 @@ function zoom() {
   if (!map) return;
   let b = null;
   GEO.features.forEach((f, i) => {
-    if (st.sido && D[i][2] !== st.sido) return;
+    if (st.unit !== '' ? unitOf[i] !== +st.unit : st.sido && D[i][2] !== st.sido) return;
     const walk = c => typeof c[0] === 'number' ? (b = b ? [Math.min(b[0], c[0]), Math.min(b[1], c[1]), Math.max(b[2], c[0]), Math.max(b[3], c[1])] : [c[0], c[1], c[0], c[1]]) : c.forEach(walk);
     walk(f.geometry.coordinates);
   });
