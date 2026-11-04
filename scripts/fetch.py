@@ -12,6 +12,11 @@
 - stores:       소상공인시장진흥공단 상가(상권)정보 points per 시군구 under raw/stores/
 - trips:        국토교통부 교통수단별 이용량 and 환승 이용량 (교통카드 data, monthly), summed per 시군구 under raw/trips/
                 These APIs are slow, so each run fetches what fits in API_BUDGET_MIN and later runs continue.
+- pm_accidents: 한국도로교통공단 개인형이동장치(PM) 교통사고 합성데이터 (odcloud 15150556, the latest table): synthetic
+                records with the statistical make-up of PM accidents, not real accident records
+- pm_fleet:     shared PM devices per 시군 from the provinces' and 구's odcloud tables (강원, 전북, 경북, 충남, 전남, 부산
+                해운대·부산진·사하·사상) and 세종 from the TAGO 공유 퍼스널모빌리티 API (live); one record per 지역 × 운영사
+- pm_parking:   PM 주차구역 points (경기도 openapi, needs GYEONGGI; 천안, 김해, 부산 해운대·부산진 odcloud tables)
 - terrain:      elevation (Mapzen Terrain Tiles on AWS Open Data, terrarium PNG, zoom TERRAIN_Z ≈ 60 m; mostly SRTM in
                 Korea, a surface model that includes buildings), one Web Mercator mosaic in terrain.npz
 - landcover:    ESA WorldCover 2021 v200 (10 m land cover, CC BY 4.0, AWS Open Data), read from its overviews at
@@ -68,11 +73,12 @@ STORES = "https://apis.data.go.kr/B553077/api/open/sdsc2/storeListInDong"  # 소
 AGE = "https://apis.data.go.kr/1741000/stdgSexdAgePpltn/selectStdgSexdAgePpltn"  # 법정동 기준 성·연령별 주민등록 인구
 AGE_DONG = "https://apis.data.go.kr/1741000/admmSexdAgePpltn/selectAdmmSexdAgePpltn"  # 행정동 기준 성·연령별 주민등록 인구
 LH_SPEC = "https://infuser.odcloud.kr/oas/docs?namespace=15080989/v1"  # 한국토지주택공사 전국 LH아파트 단지정보
-SOURCES = ["admin_dong", "dong_pop", "age", "age_dong", "stops_molit", "stops_osm", "stations_osm", "lh", "terrain", "landcover",
+PM_ACCIDENTS = "15150556"  # 한국도로교통공단_개인형이동장치PM 교통사고 합성데이터 (odcloud namespace)
+SOURCES = ["admin_dong", "dong_pop", "age", "age_dong", "stops_molit", "stops_osm", "stations_osm", "lh", "pm_accidents", "pm_fleet", "pm_parking", "terrain", "landcover",
            "routes", "stores", "trips"]
-OPTIONAL = {"age", "age_dong", "lh", "routes", "stores", "trips", "terrain", "landcover"}  # the page is built without them (their figures stay empty)
+OPTIONAL = {"age", "age_dong", "lh", "routes", "stores", "trips", "terrain", "landcover", "pm_accidents", "pm_fleet", "pm_parking"}  # the page is built without them (their figures stay empty)
 FRESH_DAYS = {"admin_dong": 7, "dong_pop": 7, "stops_molit": 30, "stops_osm": 7, "stations_osm": 7, "lh": 30, "age": 7, "age_dong": 7,
-              "terrain": 365, "landcover": 365}  # refetch after this many days
+              "terrain": 365, "landcover": 365, "pm_accidents": 7, "pm_fleet": 7, "pm_parking": 7}  # refetch after this many days
 FILES = {"routes": "routes", "trips": "trips", "stores": "stores", "terrain": "terrain.npz", "landcover": "landcover.npz"}  # else <name>.json
 BBOX = (124.5, 33.0, 132.0, 38.7)  # lon0, lat0, lon1, lat1, as in build.py
 TERRAIN = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
@@ -514,6 +520,167 @@ def fetch_lh(key):
     title = spec["paths"][path]["get"].get("summary", "")
     print(f"lh: {title}: {len(rows)} 단지, {sum(1 for r in rows if r[4])} with an address", flush=True)
     save_json("lh.json", {"table": title, "rows": rows})
+
+
+def odcloud_latest(key, namespace):
+    """Every row of the newest table of an odcloud (공공데이터포털 파일데이터 API) namespace, and its title; the tables'
+    titles end in their YYYYMMDD 기준일."""
+    spec = requests.get(f"https://infuser.odcloud.kr/oas/docs?namespace={namespace}/v1", timeout=60, headers=UA).json()
+    path = max(spec["paths"], key=lambda q: re.findall(r"\d{8}", spec["paths"][q]["get"].get("summary", "")) or [""])
+    rows, page = [], 1
+    while True:
+        d = requests.get("https://api.odcloud.kr/api" + path, params={"serviceKey": key, "page": page, "perPage": 1000, "returnType": "JSON"},
+                         timeout=120, headers=UA).json()
+        if "data" not in d:
+            raise RuntimeError(str(d)[:200])
+        rows += d["data"]
+        if page * 1000 >= d.get("totalCount", 0) or not d["data"]:
+            break
+        page += 1
+    return rows, spec["paths"][path]["get"].get("summary", "")
+
+
+def fetch_pm_accidents(key):
+    """PM 교통사고 합성데이터: one synthetic record per row (발생지역 '시도-시군구', 사고유형, 시간대, 가해자 성별·연령대,
+    사망·중상·경상·부상신고자수)."""
+    rows, title = odcloud_latest(key, PM_ACCIDENTS)
+    m = re.search(r"(\d{8})\s*$", title)
+    print(f"pm_accidents: {title}: {len(rows)} records", flush=True)
+    save_json("pm_accidents.json", {"title": title, "date": m.group(1) if m else None, "rows": rows})
+
+
+def title_date(title):
+    m = re.search(r"(\d{4})(\d{2})(\d{2})\s*$", title or "")
+    return f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else None
+
+
+def fleet_records(key):
+    """Shared PM devices: [{region ('강원 춘천시'), operator, ops_n, kick, bike, total (scooter/bicycle not told apart),
+    date, source}] from every table that answers; a table that fails is reported and skipped."""
+    out = []
+
+    def rec(region, date, source, operator=None, ops_n=None, kick=None, bike=None, total=None):
+        num = lambda v: None if v in (None, "") else int(float(str(v).replace(",", "")))
+        out.append({"region": region, "operator": operator, "ops_n": num(ops_n), "kick": num(kick), "bike": num(bike),
+                    "total": num(total), "date": date, "source": source})
+
+    def table(ns, fn):
+        try:
+            rows, title = odcloud_latest(key, ns)
+            n0 = len(out)
+            fn(rows, title_date(title), title)
+            print(f"  pm_fleet {title}: {len(out) - n0} records", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"  pm_fleet {ns}: FAILED {e}", flush=True)
+
+    def gangwon(rows, date, src):  # 시군명, 소계, 업체명(더스윙), 업체명(지쿠), …
+        for r in rows:
+            for k, v in r.items():
+                if k.startswith("업체명(") and v:
+                    rec("강원 " + r["시군명"], date, src, operator=k[4:-1], kick=v)
+
+    def jeonbuk(rows, date, src):  # 상호명, 운영대수, 운영지역 ('전북특별자치도 전주시'): 킥보드 및 자전거 등
+        for r in rows:
+            rec("전북 " + str(r["운영지역"]).split()[-1], date, src, operator=r["상호명"], total=r["운영대수"])
+
+    def gyeongbuk(rows, date, src):  # 상호명, 운영지역, 전동킥보드대수
+        for r in rows:
+            rec("경북 " + str(r["운영지역"]).strip(), date, src, operator=r["상호명"], kick=r["전동킥보드대수"])
+
+    def chungnam(rows, date, src):  # 시군 ('천안'), 개소(업체수), 전동킥보드·전기자전거 등록대수, 데이터기준일자
+        for r in rows:
+            rec("충남 " + str(r["시군"]).strip(), r.get("데이터기준일자") or date, src, ops_n=r.get("개소(업체수)"),
+                kick=r.get("전동킥보드 등록대수(대)"), bike=r.get("전기자전거 등록대수(대)"))
+
+    def jeonnam(rows, date, src):  # 시군명, 업체명, 운행대수
+        for r in rows:
+            rec("전남 " + str(r["시군명"]).strip(), date, src, operator=r["업체명"], kick=r["운행대수"])
+
+    def busan_gu(gu):  # 업체수 (해운대: '업체명'), 연도, 운영대수, 데이터기준일: the latest year
+        def fn(rows, date, src):
+            r = max(rows, key=lambda x: (x.get("연도") or 0, x.get("데이터기준일") or ""))
+            rec("부산 " + gu, r.get("데이터기준일") or date, src, ops_n=r.get("업체수", r.get("업체명")), total=r["운영대수"])
+        return fn
+
+    for ns, fn in (("15144508", gangwon), ("15144627", jeonbuk), ("15144678", gyeongbuk), ("15144880", chungnam), ("15144495", jeonnam),
+                   ("15142726", busan_gu("해운대구")), ("15142692", busan_gu("부산진구")), ("15142695", busan_gu("사하구")),
+                   ("15142613", busan_gu("사상구"))):
+        table(ns, fn)
+    try:  # 세종: the TAGO API lists only 세종's operators, live
+        base = "https://apis.data.go.kr/1613000/PersonalMobilityInfo"
+        q = {"serviceKey": key, "_type": "json"}
+        items = requests.get(f"{base}/GetPMProvider", params={**q, "numOfRows": 100}, timeout=60, headers=UA).json()["response"]["body"]["items"]
+        items = (items or {}).get("item") or []
+        for it in items if isinstance(items, list) else [items]:
+            b = requests.get(f"{base}/GetPMListByProvider", params={**q, "cityCode": it["citycode"], "providerName": it["providername"],
+                             "numOfRows": 1}, timeout=60, headers=UA).json()["response"]["body"]
+            region = "세종 세종시" if "세종" in it["cityname"] else it["cityname"]
+            rec(region, date.today().isoformat(), "국토교통부 (TAGO) 공유 퍼스널모빌리티정보 (실시간)", operator=it["providername"], kick=b["totalCount"])
+        print(f"  pm_fleet TAGO: {len(items)} operators", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"  pm_fleet TAGO: FAILED {e}", flush=True)
+    return out
+
+
+def fetch_pm_fleet(key):
+    recs = fleet_records(key)
+    if not recs:
+        raise RuntimeError("no table answered")
+    save_json("pm_fleet.json", {"fetched": date.today().isoformat(), "records": recs})
+    print(f"pm_fleet: {len(recs)} records", flush=True)
+
+
+def fetch_pm_parking(key):
+    """PM 주차구역: [{region, name, kind, cap, lon, lat, date, source}]; lon and lat are None where a source gives no
+    coordinates (a quarter of 경기도's), which still count for their 시군."""
+    pts = []
+
+    def table(ns, fn):
+        try:
+            rows, title = odcloud_latest(key, ns)
+            n0 = len(pts)
+            for r in rows:
+                p = fn(r, title_date(title), title)
+                if p:
+                    pts.append(p)
+            print(f"  pm_parking {title}: {len(pts) - n0} points", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"  pm_parking {ns}: FAILED {e}", flush=True)
+
+    f = lambda v: float(v) if v not in (None, "") else None
+    table("15128228", lambda r, d, s: {"region": "충남 천안시", "name": r.get("장 소"), "kind": "", "cap": r.get("주차가능 대수"),
+                                      "lon": f(r.get("경도")), "lat": f(r.get("위도")), "date": d, "source": s})
+    table("15127679", lambda r, d, s: {"region": "경남 김해시", "name": r.get("명칭"), "kind": r.get("설치형태") or "", "cap": None,
+                                      "lon": f(r.get("경도")), "lat": f(r.get("위도")), "date": d, "source": s})
+    table("15142727", lambda r, d, s: {"region": "부산 해운대구", "name": r.get("주차구역 위치"), "kind": "", "cap": r.get("주차대수"),
+                                      "lon": f(r.get("경도")), "lat": f(r.get("위도")), "date": d, "source": s})
+    table("15142694", lambda r, d, s: {"region": "부산 부산진구", "name": r.get("위치"), "kind": "", "cap": r.get("주차대수") or None,
+                                      "lon": f(r.get("경도")), "lat": f(r.get("위도")), "date": r.get("데이터기준일자") or d, "source": s})
+    gg = os.environ.get("GYEONGGI")
+    if gg:
+        try:
+            page, n0 = 1, len(pts)
+            while True:
+                d = requests.get("https://openapi.gg.go.kr/TBKICKBOARDPARKPLCSTUSM", params={"KEY": gg, "Type": "json", "pIndex": page, "pSize": 1000},
+                                 timeout=120, headers=UA).json()["TBKICKBOARDPARKPLCSTUSM"]
+                total = d[0]["head"][0]["list_total_count"]
+                for r in d[1]["row"]:
+                    s_ = str(r.get("DATA_STD_DE") or "")
+                    pts.append({"region": "경기 " + str(r.get("MNGINST_NM") or ""), "name": r.get("PARKPLC_INSTL_PLC"), "kind": "", "cap": None,
+                                "lon": f(r.get("REFINE_WGS84_LOGT")), "lat": f(r.get("REFINE_WGS84_LAT")),
+                                "date": f"{s_[:4]}-{s_[4:6]}-{s_[6:8]}" if len(s_) == 8 else None, "source": "경기도 개인형이동장치 주차구역 현황"})
+                if page * 1000 >= total:
+                    break
+                page += 1
+            print(f"  pm_parking 경기도: {len(pts) - n0} points", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"  pm_parking 경기도: FAILED {e}", flush=True)
+    else:
+        print("  pm_parking 경기도: GYEONGGI not set", flush=True)
+    if not pts:
+        raise RuntimeError("no table answered")
+    save_json("pm_parking.json", {"fetched": date.today().isoformat(), "points": pts})
+    print(f"pm_parking: {len(pts)} points", flush=True)
 
 
 def fetch_stores(key):

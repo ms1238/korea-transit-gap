@@ -3,13 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>전국 대중교통 소외지역</title>
+<title>PM 대동여지도</title>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
-  <h1>전국 대중교통 소외지역</h1>
+  <nav class="tabs"><a href="index.html" class="on" aria-current="page">PM 대동여지도</a><a href="accidents.html">PM 교통사고 (합성데이터)</a></nav>
+  <h1>PM 대동여지도</h1>
   <p class="sub">행정동별로 버스 정류장·철도역에서 걸어서 닿기 어려운 면적, 정류장은 있어도 노선이 드문 곳, 그리고 걷기엔 멀지만 PM(개인형 이동장치)으로 5~10분이면 정류장·역에 닿는 곳을 보여 줍니다. <a href="about.html">지표 설명·출처·한계</a></p>
   <p class="sub" id="asof"></p>
 </header>
@@ -17,26 +18,53 @@
 <section class="insights">
   <h2 id="ins-title">지역별 인사이트</h2>
   <ul id="insights"></ul>
+  <button class="more" id="ins-more" type="button" hidden></button>
   <p class="note">아래에서 시도·시군구를 고르거나 '동 지역만'을 켜면 그 범위로 다시 정리됩니다. 숫자는 면적 기준(기본은 산림·수면을 뺀 생활권 면적)이며 자료가 있는 곳만 셉니다.</p>
 </section>
 
 <section class="controls">
-  <label>지표 <select id="metric"></select></label>
-  <label>시도 <select id="sido"><option value="">전국</option></select></label>
-  <label>시군구 <select id="sgg"><option value="">전체</option></select></label>
-  <label>읍면동 <select id="dong"><option value="">전체</option></select></label>
-  <label class="chk"><input type="checkbox" id="urban"> 동 지역만 (도시형 행정동)</label>
-  <label class="chk" title="ESA WorldCover 토지피복에서 산림·수면·습지를 빼고 시가지·농지·초지만으로 비율을 냅니다"><input type="checkbox" id="hab" checked> 산림·수면 제외 (생활권 면적)</label>
-  <label class="chk"><input type="checkbox" id="show-stops" checked> 정류장</label>
-  <label class="chk"><input type="checkbox" id="show-rail" checked> 철도역</label>
-  <label class="chk"><input type="checkbox" id="show-grid"> PM 연계 격자</label>
-  <label class="chk" title="국토교통부 2025년도 첨단모빌리티 현황조사(2024년 말 기준)"><input type="checkbox" id="show-noops"> 공유 PM 미운영 지역</label>
-  <label class="chk"><input type="checkbox" id="show-terrain"> 지형(음영)</label>
-  <label class="chk"><input type="checkbox" id="show-3d"> 3D 지형</label>
+  <div class="selects">
+    <label>지표 <select id="metric"></select></label>
+    <label>시도 <select id="sido"><option value="">전국</option></select></label>
+    <label>시군구 <select id="sgg"><option value="">전체</option></select></label>
+    <label>읍면동 <select id="dong"><option value="">전체</option></select></label>
+  </div>
+  <div class="opts">
+    <label class="chk"><input type="checkbox" id="urban"> 동 지역만</label>
+    <label class="chk" title="ESA WorldCover 토지피복에서 산림·수면·습지를 빼고 시가지·농지·초지만으로 비율을 냅니다"><input type="checkbox" id="hab" checked> 산림·수면 제외 (생활권 면적)</label>
+    <details class="layers" id="layers">
+      <summary>지도 레이어</summary>
+      <div class="opts">
+        <label class="chk"><input type="checkbox" id="show-stops" checked> 정류장</label>
+        <label class="chk"><input type="checkbox" id="show-rail" checked> 철도역</label>
+        <label class="chk"><input type="checkbox" id="show-grid"> PM 연계 격자</label>
+        <label class="chk"><input type="checkbox" id="show-terrain"> 지형(음영)</label>
+        <label class="chk"><input type="checkbox" id="show-3d"> 3D 지형</label>
+      </div>
+      <div class="opts grp" title="지자체·시도가 공개한 공유 PM 기기 수와 PM 주차구역. 자료마다 기준일이 다릅니다.">
+        <span class="gh">PM 현황</span>
+        <label class="chk"><input type="checkbox" id="show-fleet"> 기기 수 (인구 1천 명당)</label>
+        <label class="chk"><input type="checkbox" id="show-park"> 주차구역</label>
+      </div>
+      <div class="opts grp" title="국토교통부 2025년도 첨단모빌리티 현황조사(2024년 말 기준)">
+        <span class="gh">미운영 (2024년 말)</span>
+        <label class="chk"><input type="checkbox" id="show-noops"> 공유 PM</label>
+        <label class="chk"><input type="checkbox" id="show-nobike"> 공유 자전거</label>
+      </div>
+      <div class="opts grp" title="지자체 PM·견인 조례 분석. 광역 조례가 있으면 소속 시군구도 해당으로 봅니다. 여러 개를 켜면 모두 해당하는 시군구만 표시합니다.">
+        <span class="gh">조례·견인</span>
+        <label class="chk"><input type="checkbox" id="ord-o"> PM 조례</label>
+        <label class="chk"><input type="checkbox" id="ord-m"> 조례에 이동·견인 근거</label>
+        <label class="chk"><input type="checkbox" id="ord-t"> PM 견인 (견인료)</label>
+        <label class="chk"><input type="checkbox" id="ord-b"> 자전거 견인</label>
+      </div>
+    </details>
+  </div>
 </section>
 
 <section class="mapwrap">
   <div id="map"></div>
+  <button class="legend-btn" id="legend-btn" type="button">범례</button>
   <div class="legend" id="legend"></div>
 </section>
 <p class="note" id="metric-note"></p>
