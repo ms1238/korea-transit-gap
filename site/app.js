@@ -383,91 +383,108 @@ function render() {
   renderInsights();
 }
 
-// plain-language findings for the current selection (시도 / 시군구, 동 지역 filter)
+// plain-language findings for the current selection, in short groups: 대중교통 공백 / PM으로 메울 곳 / 공급 / 제도.
+// Data caveats go to a folded '자료 참고' list.
+const INS_G = [['gap', '대중교통 공백'], ['pm', 'PM으로 메울 수 있는 곳'], ['supply', 'PM·자전거 공급'], ['policy', '제도·규제']];
+const shortName = n => esc(String(n).replace(/^\S+ /, ''));
+const pp = v => v == null ? '-' : Math.round(v * 100) + '%';  // calm percentages: no decimals in prose
 function renderInsights() {
-  const pmM = M('pm'), goodM = M('good'), busM = M('bus');
+  const pmM = M('pm'), goodM = M('good'), eM = M('either');
   const scope = D.filter(r => (!st.urban || r[C.type] === '동') && (!st.sido || r[C.sido] === st.sido) && (!pickSgg || r[C.sgg] === pickSgg));
   if (!scope.length) { $('insights').innerHTML = ''; $('ins-head').innerHTML = ''; return; }
   const name = pickSgg ? `${scope[0][C.sidonm]} ${scope[0][C.sggnm]}` : st.sido ? scope[0][C.sidonm] : '전국';
   $('ins-title').textContent = `지역별 인사이트 · ${name}${st.urban ? ' 동 지역' : ''}`;
-  const x = agg(scope), li = [], T = TABS[st.tab];
+  const x = agg(scope), T = TABS[st.tab], groups = {}, notes = [];
   renderHead(scope, x);
   renderFocus();
-  const add = (g, html) => { if (!T.ins || T.ins.includes(g)) li.push(html); };
+  const add = (g, html) => { if (!T.ins || T.ins.includes(g)) (groups[g] ??= []).push(html); };
   const nat = agg(D.filter(r => !st.urban || r[C.type] === '동'));
-  if (x.pmArea) add('pm', `${basis()}으로 보면 <b>${pct(x.walk / x.pmArea)}</b>는 걸어서 정류장·역에 닿고, <b>${pct((x.pm5 + x.pm10) / x.pmArea)}</b>는 걷기엔 멀지만 PM으로 10분 안에 닿습니다. PM 거리지만 경사가 급한 곳 ${pct(x.steep / x.pmArea)}, PM으로도 먼 곳 ${pct(x.far / x.pmArea)}입니다.`
-    + (name !== '전국' && nat.pmArea ? ` (전국${st.urban ? ' 동 지역' : ''} PM 10분권 ${pct((nat.pm5 + nat.pm10) / nat.pmArea)})` : ''));
-  const top = (list, k, n, f) => list.filter(r => r[k] != null).sort((a, b) => b[k] - a[k]).slice(0, n).map(f).join(', ');
+  const list = (rows, k, f, n = 3) => rows.filter(r => r[k] != null).sort((a, b) => b[k] - a[k]).slice(0, n).map(f).join(', ');
+  const hab = st.hab ? '생활권' : '전체';
   if (!pickSgg) {
-    const sg = sgRows(scope, pmM).filter(r => !r.gap);
-    const t1 = top(sg, 'pm', 3, r => `${esc(r.name.replace(/^\S+ /, ''))} ${pct(r.pm)}`);
-    if (t1) add('pm', `PM이 첫·마지막 구간을 메울 땅이 넓은 시군구: <b>${t1}</b>`);
-    const t2 = top(sg, 'pmidx', 3, r => `${esc(r.name.replace(/^\S+ /, ''))} ${(r.pmidx * 100).toFixed(0)}`);
-    if (t2) add('pm', `PM 잠재 지수(인구·상가 밀도까지 반영)가 높은 시군구: <b>${t2}</b>`);
-    const nOff = new Set(scope.filter(r => OPS[r[C.sgg]] === 0).map(r => r[C.sgg])).size;
-    if (Object.keys(OPS).length && nOff) {
-      const t5 = top(sg.filter(r => r.pmops === 0), 'pm', 3, r => `${esc(r.name.replace(/^\S+ /, ''))} ${pct(r.pm)}`);
-      add('supply', `공유 PM이 운영되지 않는 시군구(${opsDate()} 기준) ${nOff}곳` + (t5 ? ` 가운데 PM 10분권이 넓은 곳: <b>${t5}</b>` : ''));
-    } else if (Object.keys(OPS).length) add('supply', `이 범위의 시군구는 모두 공유 PM이 운영 중입니다(${opsDate()} 기준).`);
-    const sggs = [...new Set(scope.map(r => r[C.sgg]))], tows = sggs.filter(g => ORD[g]?.t), fees = tows.map(g => ORD[g].fee).filter(Boolean).sort((a, b) => a - b);
-    const units = [...new Set(sggs.map(g => FLEET[g]).filter(Boolean))], whole = units.filter(u => !u.partial);
-    if (units.length) add('supply', `PM 기기 수 자료가 있는 지역 ${units.length}곳, 합계 ${fmt(whole.reduce((a, u) => a + u.total, 0))}대${whole.length < units.length ? ' <small>(일부만 최신 자료로 바뀐 시도 전체 값은 합계에서 뺌)</small>' : ''} <small>(자료마다 기준일이 다름: ${units.map(u => u.date.split(' · ')).flat().sort()[0]} ~ ${units.map(u => u.date.split(' · ')).flat().sort().pop()})</small>`);
-    const pus = [...new Set(sggs.map(g => PARKU[g]).filter(Boolean))].map(u => ({ u, g: unitGap(u) })).filter(x => x.g);
+    const sg = sgRows(scope, pmM).filter(r => !r.gap), sggs = [...new Set(scope.map(r => r[C.sgg]))];
+    // 대중교통 공백
+    const e = eM.v(x);
+    if (e != null) add('gap', `${hab} 땅의 <b>${pp(e)}</b>는 버스 정류장·철도역까지 걸어서 가기 어렵습니다.`);
+    const t1 = list(sg, 'either', r => `${shortName(r.name)} ${pp(r.either)}`);
+    if (t1) add('gap', `그 비율이 높은 곳: <b>${t1}</b>`);
+    const t2 = list(sg, 'good', r => `${shortName(r.name)} ${pp(r.good)}`);
+    if (t2) add('gap', `노선이 ${meta.good_routes}개 이상인 정류장 기준으로 보면: ${t2}`);
+    // PM
+    if (x.pmArea) add('pm', `PM을 타면 10분 안에 정류장·역에 닿는 땅이 <b>${pp((x.pm5 + x.pm10) / x.pmArea)}</b> 더 있습니다.` + (name !== '전국' && nat.pmArea ? ` (전국 ${pp((nat.pm5 + nat.pm10) / nat.pmArea)})` : ''));
+    const t3 = list(sg, 'pm', r => `${shortName(r.name)} ${pp(r.pm)}`);
+    if (t3) add('pm', `PM으로 메울 땅이 넓은 곳: <b>${t3}</b>`);
+    const t4 = list(sg, 'pmidx', r => shortName(r.name));
+    if (t4) add('pm', `사람·상가가 많아 PM 수요도 클 곳: ${t4}`);
+    // 공급
+    const nOff = sggs.filter(g => OPS[g] === 0).length, off = sg.filter(r => r.pmops === 0);
+    if (Object.keys(OPS).length) add('supply', nOff ? `공유 PM이 없는 시군구는 <b>${nOff}곳</b>입니다(${opsDate()}).` + (off.length ? ` 이 중 PM으로 메울 땅이 넓은 곳: ${list(off, 'pm', r => shortName(r.name))}` : '') : `모든 시군구에 공유 PM이 있습니다(${opsDate()}).`);
+    const pus = [...new Set(sggs.map(g => PARKU[g]).filter(Boolean))].map(u => ({ u, g: unitGap(u) })).filter(v => v.g);
     if (pus.length) {
-      const all = parkGap(pus.reduce((a, x) => a + x.u.n, 0), pus.reduce((a, x) => a + unitArea(x.u), 0));
-      const worst = pus.filter(x => x.g.gaps[0].short > 0).sort((a, b) => b.g.gaps[0].short - a.g.gaps[0].short).slice(0, 3).map(x => `${esc(x.u.name.replace(/^\S+ /, ''))} ${pct(x.g.gaps[0].short)}`).join(', ');
-      add('supply', `PM 주차구역 자료가 있는 지역 ${pus.length}곳(합계 ${fmt(pus.reduce((a, x) => a + x.u.n, 0))}곳): ${basis()} 1㎢당 ${all.d.toFixed(1)}곳으로, 주차 준수율이 가장 높다는 1㎢당 20~30곳 기준에 ${gapText(all)}. 20곳 기준 충족 ${pus.filter(x => !x.g.gaps[0].short).length}곳, 30곳 기준 충족 ${pus.filter(x => !x.g.gaps[1].short).length}곳` + (worst ? ` · 부족률이 큰 곳(20곳 기준): <b>${worst}</b>` : '') + '.');
+      const all = parkGap(pus.reduce((a, v) => a + v.u.n, 0), pus.reduce((a, v) => a + unitArea(v.u), 0));
+      add('supply', `PM 주차구역은 ${hab} 1㎢당 <b>${all.d.toFixed(1)}곳</b>입니다. 주차가 가장 잘 지켜진다는 1㎢당 20곳에 ` + (all.gaps[0].short > 0 ? `<b>${pp(all.gaps[0].short)} 모자랍니다</b>.` : '이미 닿습니다.') + ` <small>(자료가 있는 ${pus.length}개 지역)</small>`);
     }
-    const lvN = k => { const n = [0, 0, 0]; for (const g of sggs) if (ORD[g]) n[lvOf(ORD[g], k)]++; return n; };
-    const lvLine = k => { const n = lvN(k); return `기초 자체 <b>${n[2]}곳</b> · 광역 조례만 ${n[1]}곳 · 없음 ${n[0]}곳`; };
-    if (Object.keys(ORD).length && st.tab === 'policy') {
-      add('policy', `PM 조례 (${sggs.length}개 시군구): ${lvLine('o')}`);
-      add('policy', `조례에 PM 이동·견인 근거: ${lvLine('m')}`);
-      add('policy', `자전거 견인: ${lvLine('b')}`);
+    // 제도
+    if (Object.keys(ORD).length) {
+      const lvN = k => { const n = [0, 0, 0]; for (const g of sggs) if (ORD[g]) n[lvOf(ORD[g], k)]++; return n; };
+      const o = lvN('o'), m = lvN('m'), t = lvN('t'), b = lvN('b');
+      const tows = sggs.filter(g => ORD[g]?.t), fees = tows.map(g => ORD[g].fee).filter(Boolean).sort((p, q) => p - q);
+      add('policy', `PM 조례는 시군구 ${sggs.length}곳 중 <b>${o[2]}곳</b>이 직접 두고 있고, ${o[1]}곳은 광역(시·도) 조례만 적용됩니다.`);
+      if (st.tab === 'policy') add('policy', `조례에 PM을 옮기거나 견인할 근거가 있는 곳: 직접 ${m[2]}곳, 광역 조례로 ${m[1]}곳.`);
+      add('policy', `PM을 견인하는 곳은 <b>${tows.length}곳</b>` + (fees.length ? `이고, 견인료는 보통 ${won(fees[Math.floor(fees.length / 2)])}(${won(fees[0])}~${won(fees[fees.length - 1])})입니다.` : '입니다.'));
+      const gr = {}; for (const g of tows) if (ORD[g].grace) gr[ORD[g].grace] = (gr[ORD[g].grace] || 0) + 1;
+      if (Object.keys(gr).length) add('policy', '세워 둔 뒤 견인까지 기다려 주는 시간: ' + Object.entries(gr).sort((p, q) => graceMin(p[0]) - graceMin(q[0])).map(([k, n]) => `${esc(k)} ${n}곳`).join(', ') + '.');
+      if (st.tab === 'policy') add('policy', `자전거도 견인하는 곳: ${b[2] + b[1]}곳 (직접 ${b[2]}, 광역 ${b[1]}).`);
     }
-    if (Object.keys(ORD).length) add('policy', `PM 견인 시군구 ${tows.length}곳 / ${sggs.length}곳 (기초 자체 ${lvN('t')[2]}곳 · 광역 ${lvN('t')[1]}곳)` + (fees.length ? ` (견인료 ${won(fees[0])}~${won(fees[fees.length - 1])}, 중앙값 ${won(fees[Math.floor(fees.length / 2)])})` : '') + ` · 자전거 견인 ${sggs.filter(g => ORD[g]?.b).length}곳 · 공유자전거 미운영 ${sggs.filter(g => BIKE[g]?.[0] === 0).length}곳`);
-    const gr = {}; for (const g of tows) if (ORD[g].grace) gr[ORD[g].grace] = (gr[ORD[g].grace] || 0) + 1;
-    if (Object.keys(gr).length) add('policy', `PM 견인 유예시간(실제 운영 현황 표가 있는 시군구 ${Object.values(gr).reduce((a, b) => a + b, 0)}곳): ` + Object.entries(gr).sort((a, b) => graceMin(a[0]) - graceMin(b[0])).map(([k, n]) => `${esc(k)} ${n}곳`).join(' · ') + ' <small>(\'즉시 견인\'이어도 일반견인구역은 유예를 두는 곳이 있음, 표 비고 참고)</small>');
-    const t3 = top(sg, 'either', 3, r => `${esc(r.name.replace(/^\S+ /, ''))} ${pct(r.either)}`);
-    if (t3) add('gap', `버스·철도 어디에도 걸어서 닿기 어려운 땅이 넓은 시군구: <b>${t3}</b>`);
-    const t4 = top(sg, 'good', 3, r => `${esc(r.name.replace(/^\S+ /, ''))} ${pct(r.good)}`);
-    if (t4) add('gap', `노선이 ${meta.good_routes}개 이상인 정류장까지 걸어서 닿기 어려운 땅이 넓은 시군구: <b>${t4}</b>`);
+    const units = [...new Set(sggs.map(g => FLEET[g]).filter(Boolean))];
+    if (units.length) notes.push(`PM 기기 수는 지역마다 기준일이 다릅니다(${units.map(u => u.date.split(' · ')).flat().sort()[0]} ~ ${units.map(u => u.date.split(' · ')).flat().sort().pop()}).`);
   } else {
-    const sidoX = agg(D.filter(r => (!st.urban || r[C.type] === '동') && r[C.sido] === scope[0][C.sido]));
+    const g = pickSgg, sidoX = agg(D.filter(r => (!st.urban || r[C.type] === '동') && r[C.sido] === scope[0][C.sido]));
+    // 대중교통 공백
+    const e = eM.v(x), ne = eM.v(nat), gd = goodM.v(x);
+    if (e != null) add('gap', `${hab} 땅의 <b>${pp(e)}</b>는 버스 정류장·철도역까지 걸어서 가기 어렵습니다` + (ne != null ? ` (전국 평균 ${pp(ne)}).` : '.'));
+    if (gd != null && e != null && gd - e >= 0.01) add('gap', `정류장은 가까워도 노선이 1~${meta.good_routes - 1}개뿐인 땅이 ${pp(gd - e)} 더 있습니다.`);
+    const t = trips(g), ag = AGE[g];
+    if (t.elder != null) add('gap', `버스·지하철 승차의 ${pp(t.elder)}가 어르신(경로) 승차입니다.`);
+    // PM
     const v = pmM.v(x), sv = pmM.v(sidoX);
-    if (v != null && sv != null) add('pm', `PM 10분 안에 새로 닿는 땅의 비율은 ${pct(v)}로, ${esc(scope[0][C.sidonm])} 평균(${pct(sv)})보다 <b>${v > sv ? '높습니다' : '낮습니다'}</b>.`);
-    const dt = top(scope, C.pm_index, 3, r => `${esc(r[C.name])} ${r[C.pm_index].toFixed(0)}`);
-    if (dt) add('pm', `이 시군구에서 PM 잠재 지수가 높은 읍면동: <b>${dt}</b>`);
-    const dg = top(scope.filter(r => r[K('walk')] != null).map(r => Object.assign([...r], { pmv: r[K('pm5')] + r[K('pm10')] })), 'pmv', 3, r => `${esc(r[C.name])} ${pct(r.pmv)}`);
-    if (dg) add('pm', `PM 10분권 비율이 높은 읍면동: <b>${dg}</b>`);
-    const g = goodM.v(x), b = busM.v(x);
-    if (g != null) add('gap', `노선이 ${meta.good_routes}개 이상인 정류장 도보권 밖 면적은 ${pct(g)}입니다` + (b != null && g - b >= 0.005 ? ` (그 가운데 ${pct(g - b)}p는 정류장은 가까워도 노선이 1~${meta.good_routes - 1}개뿐인 땅).` : '.'));
-    const t = trips(pickSgg), ag = AGE[pickSgg];
-    if (ag) add('pm', `20~39세 주민 비중 ${pct(ag.y2039)}, 70세 이상 ${pct(ag.o70)}` + (t.elder != null ? ` · 교통카드 승차 가운데 경로 비중 ${pct(t.elder)}` : '') + '.');
-    if (t.sparse) add('gap', `<small>이 시군구는 교통카드 자료가 거의 들어오지 않아(주민 1인당 하루 승차 ${(meta.trips_min ?? 0.02).toFixed(2)}회 미만이거나 자료 없음) 승차·환승·경로 값을 '자료 부족'으로 표시합니다. 실제 이용이 없는 것이 아닙니다.</small>`);
-    const o = ORD[pickSgg];
-    if (FLEET[pickSgg]) add('supply', `PM 기기: ${fleetText(FLEET[pickSgg], pickSgg)}`);
-    const svy = survey(pickSgg);
-    if (bikeLine(svy)) add('supply', `공유자전거 (${meta2()}): ${bikeLine(svy)}`);
-    if (useLine(svy)) add('supply', `모바일 앱 기반 이용 횟수 (${meta2()}): ${useLine(svy)}`);
-    const pu = PARKU[pickSgg], pg = unitGap(pu);
-    if (pg) add('supply', `PM 주차구역 ${fmt(pu.n)}곳${pu.sgg.length > 1 ? `(${esc(pu.name)} 전체)` : ''} = ${basis()} 1㎢당 ${pg.d.toFixed(1)}곳. 1㎢당 20~30곳(주차 준수율이 가장 높다는 연구 기준)에 견주면 ${gapText(pg)}. <small>${esc(pu.date)} 기준</small>`);
-    else if (PMS.parking_units?.length) add('supply', '<small>이 시군구는 PM 주차구역 자료가 없습니다(0곳이라는 뜻이 아닙니다).</small>');
-    if (U[pickSgg] && st.tab === 'policy') add('policy', `법정 도시지역(국토계획법 용도지역)이 면적의 ${pct(U[pickSgg].area)}, 주민의 ${pct(U[pickSgg].pop)}${U[pickSgg].city ? ` (${esc(U[pickSgg].city)} 전체 값)` : ''}입니다.`);
-    if (o) add('policy', `조례: PM 조례 ${lvText(o, 'o')}, 이동·견인 근거 ${lvText(o, 'm')}, PM 견인 ${towText(o)}${o.t ? `, 유예시간 ${graceText(o)}` : ''}, 자전거 견인 ${bikeTow(o)}.` + (o.practice ? ` <small>(견인 여부·견인료·유예시간: ${esc(o.practice)})</small>` : '') + (o.wide.length ? ` <small>(광역 조례 함께 적용: ${o.wide.map(w => esc(w[0])).join(', ')})</small>` : ''));
-    if (BIKE[pickSgg]) add('supply', `공유자전거: ${bikeText(BIKE[pickSgg])} (${opsDate()} 기준).`);
-    if (OPS[pickSgg] != null) add('supply', OPS[pickSgg] ? `공유 PM이 운영되는 지자체입니다(${opsDate()} 기준).` : `<b>공유 PM이 운영되지 않는 지자체입니다</b>(${opsDate()} 기준).` + (pmM.v(x) ? ' 위 PM 10분권은 서비스가 들어오면 메울 수 있는 공백입니다.' : ''));
-    if (IND[pickSgg]) add('pm', `산업단지 ${IND[pickSgg].n}곳(가동업체 ${fmt(IND[pickSgg].firms)}곳${IND[pickSgg].city ? ', ' + esc(IND[pickSgg].city) + ' 전체' : ''})은 출퇴근 목적지로, 역과 떨어져 있으면 PM 연계 후보입니다.`);
+    if (v != null) add('pm', `PM을 타면 10분 안에 정류장·역에 닿는 땅이 <b>${pp(v)}</b> 더 있습니다` + (sv != null ? ` (${esc(scope[0][C.sidonm])} 평균 ${pp(sv)}).` : '.'));
+    if (x.pmArea && (x.steep + x.far) / x.pmArea >= 0.01) add('pm', `경사가 급하거나 PM으로도 먼 땅은 ${pp((x.steep + x.far) / x.pmArea)}입니다.`);
+    const dt = list(scope, C.pm_index, r => esc(r[C.name]));
+    if (dt) add('pm', `PM이 특히 쓸모 있을 동네: <b>${dt}</b>`);
+    if (ag) add('pm', `주민 가운데 20~39세는 ${pp(ag.y2039)}, 70세 이상은 ${pp(ag.o70)}입니다.`);
+    if (IND[g]) add('pm', `산업단지 ${IND[g].n}곳(가동업체 ${fmt(IND[g].firms)}곳)이 있어 출퇴근 PM 연계 후보가 됩니다.`);
+    // 공급
+    const fu = FLEET[g], svy = survey(g);
+    if (OPS[g] != null) add('supply', OPS[g] ? `공유 PM이 운영되고 있습니다(${opsDate()}).` : `<b>공유 PM이 없습니다</b>(${opsDate()}). PM으로 메울 땅은 서비스가 들어와야 쓸 수 있습니다.`);
+    if (fu) add('supply', (isWide(fu) ? `PM 기기는 ${esc(fu.name)} 전체로만 집계돼 있습니다: ` : 'PM 기기: ') + `<b>${fmt(fu.total)}대</b>` + (fu.ops.length ? ` (${fu.ops.slice(0, 3).map(([o, n]) => `${esc(o)} ${fmt(n)}`).join(', ')}${fu.ops.length > 3 ? ' 등' : ''})` : '') + `. <small>${esc(fu.date)}</small>`);
+    if (useLine(svy)) add('supply', `앱으로 빌린 횟수(${meta2()}): ${useLine(svy)}`);
+    if (BIKE[g]) add('supply', `공유자전거: ${bikeText(BIKE[g])}` + (bikeLine(svy) ? ` · ${bikeLine(svy)}` : '') + '.');
+    const pu = PARKU[g], pg = unitGap(pu);
+    if (pg) add('supply', `PM 주차구역은 ${hab} 1㎢당 <b>${pg.d.toFixed(1)}곳</b>입니다. 1㎢당 20곳에 ` + (pg.gaps[0].short > 0 ? `<b>${pp(pg.gaps[0].short)} 모자랍니다</b>` : '이미 닿습니다') + ` (30곳 기준: ${pg.gaps[1].short > 0 ? pp(pg.gaps[1].short) + ' 부족' : '충족'}).`);
+    else if (PMS.parking_units?.length) notes.push('이 시군구는 PM 주차구역 자료가 없습니다(0곳이라는 뜻이 아님).');
+    // 제도
+    const o = ORD[g];
+    if (o) {
+      add('policy', `PM 조례: ${lvText(o, 'o')}. 옮기거나 견인할 근거: ${lvText(o, 'm')}.`);
+      add('policy', o.t ? `PM 견인: <b>${towText(o)}</b>` + (o.grace ? `, ${/즉시/.test(o.grace) ? '<b>즉시 견인</b>' : `${esc(o.grace)} 기다린 뒤 견인`}` : '') + (o.note ? ` <small>(${esc(o.note)})</small>` : '') + '.' : 'PM을 견인하지 않습니다.');
+      add('policy', `자전거 견인: ${bikeTow(o)}.`);
+      if (o.practice) notes.push(`견인 여부·견인료·유예시간은 ${esc(o.practice)} 기준입니다.`);
+      if (o.wide.length) notes.push(`광역 조례도 함께 적용됩니다: ${o.wide.map(w => esc(w[0])).join(', ')}.`);
+    }
+    if (U[g] && st.tab === 'policy') add('policy', `법정 도시지역이 면적의 ${pp(U[g].area)}, 주민의 ${pp(U[g].pop)}입니다${U[g].city ? ` (${esc(U[g].city)} 전체)` : ''}.`);
+    if (t.sparse) notes.push('교통카드 자료가 거의 들어오지 않는 시군구라 승차 관련 값은 비워 둡니다(실제 이용이 없다는 뜻이 아님).');
   }
   const gaps = [...new Set(scope.filter(r => r[C.stop_gap]).map(r => r[C.sggnm]))], noRoute = new Set(scope.filter(r => !r[C.route_ok]).map(r => r[C.sgg])).size;
   const noCard = pickSgg ? 0 : new Set(scope.filter(r => trips(r[C.sgg]).sparse).map(r => r[C.sgg])).size;
-  if (gaps.length) add('gap', `<small>정류장 위치 자료가 부족해 버스 지표를 뺀 곳: ${gaps.map(esc).join(', ')}</small>`);
-  if (noRoute) add('gap', `<small>정차 노선수 자료가 없거나 수집 중인 시군구 ${noRoute}곳은 노선 관련 지표가 비어 있습니다.</small>`);
-  if (noCard) add('gap', `<small>교통카드 자료가 거의 없는 시군구 ${noCard}곳은 승차·환승 값을 '자료 부족'으로 표시합니다.</small>`);
-  const cut = NARROW && !st.insMore ? 3 : li.length;
-  $('insights').innerHTML = li.slice(0, cut).map(s => `<li>${s}</li>`).join('');
-  $('ins-more').hidden = !NARROW || li.length <= 3;
-  $('ins-more').textContent = st.insMore ? '접기' : `더 보기 (${li.length - 3})`;
+  if (gaps.length) notes.push(`정류장 위치 자료가 부족해 버스 지표를 뺀 곳: ${gaps.map(esc).join(', ')}.`);
+  if (noRoute) notes.push(`정차 노선 수 자료가 없는 시군구 ${noRoute}곳은 노선 관련 값이 비어 있습니다.`);
+  if (noCard) notes.push(`교통카드 자료가 거의 없는 시군구 ${noCard}곳은 승차 관련 값을 비워 둡니다.`);
+  const shown = INS_G.filter(([k]) => groups[k]?.length), cut = NARROW && !st.insMore ? 1 : shown.length;
+  $('insights').innerHTML = shown.slice(0, cut).map(([k, h]) => `<div class="ins-group"><h3>${h}</h3><ul>${groups[k].map(v => `<li>${v}</li>`).join('')}</ul></div>`).join('') +
+    (notes.length && (!NARROW || st.insMore) ? `<details class="ins-notes"><summary>자료 참고 (${notes.length})</summary><ul>${notes.map(n => `<li>${n}</li>`).join('')}</ul></details>` : '');
+  $('ins-more').hidden = !NARROW || shown.length <= 1;
+  $('ins-more').textContent = st.insMore ? '접기' : `더 보기 (${shown.length - 1})`;
 }
 
 function legend(m) {
@@ -553,6 +570,10 @@ const graceText = o => !o?.t ? '-' : (o.grace ? esc(o.grace) : '자료 없음') 
 const bikeTow = o => !o ? '-' : !o.b ? '없음' : (o.t && o.fee ? won(o.fee) + ' <small>(PM과 같은 금액으로 봄)</small>' : '있음') + (lvOf(o, 'b') === 1 ? ' <small>광역 조례</small>' : '');
 const towText = o => !o ? '-' : !o.t ? '없음' : (o.fee ? won(o.fee) + (o.planned ? '(예정)' : '') : '견인') + (o.src && o.wide.some(w => w[0] === o.src) ? ` <small title="${esc(o.src)} 조례 기준">광역</small>` : '');
 
+const isWide = u => !!u && u.sgg.length > 1;
+const unitShort = u => String(u.name).split(' ').pop().replace(/(특별시|광역시|특별자치시|특별자치도)$/, '');
+const wideTxt = (u, txt) => `<small class="wide" title="시군구별 자료가 없어 ${esc(u.name)} 전체 값만 있습니다">${esc(unitShort(u))} 전체 ${txt}</small>`;
+const avgTag = u => isWide(u) ? ` <small class="wide" title="${esc(u.name)} 전체 값">${esc(unitShort(u))} 평균</small>` : '';
 function sgRows(rows, m) {
   const by = new Map();
   for (const r of rows) {
@@ -566,10 +587,10 @@ function sgRows(rows, m) {
       v: m.v(x), gap: rs[0][C.stop_gap], either: M('either').v(x), good: M('good').v(x), route: rs[0][C.route_ok], osm: rs[0][C.osm_fill], ...trips(rs[0][C.sgg]), pm: M('pm').v(x), pmidx: M('pmidx').v(x), stores: x.storeArea ? x.stores : null,
       firms: IND[rs[0][C.sgg]]?.firms ?? null, icity: IND[rs[0][C.sgg]]?.city ?? null, lh: LH[rs[0][C.sgg]]?.units ?? null, y2039: AGE[rs[0][C.sgg]]?.y2039 ?? null, o70: AGE[rs[0][C.sgg]]?.o70 ?? null,
       pmops: OPS[rs[0][C.sgg]] ?? null, bike: BIKE[rs[0][C.sgg]]?.[0] ?? null, bikeKind: BIKE[rs[0][C.sgg]]?.[1] || '', ord: ORD[rs[0][C.sgg]] || null,
-      fleetU: FLEET[rs[0][C.sgg]] || null, fleet: FLEET[rs[0][C.sgg]]?.total ?? null, fleetpc: FLEET[rs[0][C.sgg]]?.pop ? FLEET[rs[0][C.sgg]].total / FLEET[rs[0][C.sgg]].pop * 1000 : null,
-      sv: survey(rs[0][C.sgg]), bikes: survey(rs[0][C.sgg])?.bikes ?? null,
+      fleetU: FLEET[rs[0][C.sgg]] || null, fleet: isWide(FLEET[rs[0][C.sgg]]) ? null : FLEET[rs[0][C.sgg]]?.total ?? null, fleetpc: FLEET[rs[0][C.sgg]]?.pop ? FLEET[rs[0][C.sgg]].total / FLEET[rs[0][C.sgg]].pop * 1000 : null,
+      sv: survey(rs[0][C.sgg]), bikes: (sv => !sv || isWide(sv.pub || sv.pri) ? null : sv.bikes)(survey(rs[0][C.sgg])),
       pmuse: (u => u && u.pop ? u.pm_use / u.pop * 1e4 : null)(survey(rs[0][C.sgg])?.pu),
-      parkU: PARKU[rs[0][C.sgg]] || null, park: PARKU[rs[0][C.sgg]]?.n ?? null,
+      parkU: PARKU[rs[0][C.sgg]] || null, park: isWide(PARKU[rs[0][C.sgg]]) ? null : PARKU[rs[0][C.sgg]]?.n ?? null,
       ...(() => { const g = unitGap(PARKU[rs[0][C.sgg]]); return { parkd: g?.d ?? null, park20: g?.gaps[0].short ?? null, park30: g?.gaps[1].short ?? null }; })(),
       pmord: ORD[rs[0][C.sgg]] ? lvOf(ORD[rs[0][C.sgg]], 'o') : null, tow: ORD[rs[0][C.sgg]]?.t ? (ORD[rs[0][C.sgg]].fee ?? 0) : null, btow: ORD[rs[0][C.sgg]] ? lvOf(ORD[rs[0][C.sgg]], 'b') : null, grace: ORD[rs[0][C.sgg]]?.t ? graceMin(ORD[rs[0][C.sgg]].grace) : null, move: ORD[rs[0][C.sgg]] ? lvOf(ORD[rs[0][C.sgg]], 'm') : null, uarea: U[rs[0][C.sgg]]?.area ?? null, upop: U[rs[0][C.sgg]]?.pop ?? null, ucity: U[rs[0][C.sgg]]?.city ?? null };
   });
@@ -609,12 +630,14 @@ function renderSgg(rows, m) {
     { k: 'either', h: '버스·철도 도보권 밖', f: pct }, { k: 'good', h: '노선 넉넉한 정류장 도보권 밖', f: pct },
     { k: 'pm', h: 'PM 10분 새로 닿는 면적', f: pct }, { k: 'pmidx', h: 'PM 잠재 지수', f: v => v == null ? '-' : (v * 100).toFixed(1) },
     { k: 'pmops', h: `공유 PM 운영 (${opsDate()})`, f: v => opsText(v) }, { k: 'bike', h: `공유자전거 운영 (${opsDate()})`, f: (v, r) => bikeText(v == null ? null : [v, r.bikeKind]) },
-    { k: 'fleet', h: 'PM 기기 수', f: (v, r) => v == null ? '-' : fmt(v) + (r.fleetU.sgg.length > 1 ? ` <small title="${esc(r.fleetU.name)} 전체 값">${r.fleetU.sgg.length > 5 ? '시도' : '시'}</small>` : '') + ` <small>${esc(r.fleetU.date)}</small>` },
-    { k: 'fleetpc', h: 'PM 기기 (1천 명당)', f: v => v == null ? '-' : v.toFixed(1) },
-    { k: 'bikes', h: `공유자전거 (${meta2()})`, f: (v, r) => v == null ? '-' : fmt(v) + ((r.sv.pub || r.sv.pri).sgg.length > 1 ? ' <small>시</small>' : '') },
-    { k: 'pmuse', h: 'PM 앱 이용 (1만 명당)', f: v => v == null ? '-' : v.toFixed(1) }, { k: 'park', h: 'PM 주차구역', f: (v, r) => v == null ? '-' : fmt(v) + (r.parkU.sgg.length > 1 ? ` <small title="${esc(r.parkU.name)} 전체 값">시</small>` : '') },
-    { k: 'parkd', h: `주차구역 (${st.hab ? '생활권 ' : ''}1㎢당)`, f: v => v == null ? '-' : v.toFixed(1) },
-    { k: 'park20', h: '20곳/㎢ 기준 부족', f: v => v == null ? '-' : v > 0 ? pct(v) : '충족' }, { k: 'park30', h: '30곳/㎢ 기준 부족', f: v => v == null ? '-' : v > 0 ? pct(v) : '충족' },
+    // a value collected only for a whole 시도 or 시 (서울 PM 기기, 시도별 앱 이용 …) is not repeated as each 구's own:
+    // counts show as '서울 전체 18,548대' in grey and sort last, rates as the area's average
+    { k: 'fleet', h: 'PM 기기 수', f: (v, r) => v == null ? (isWide(r.fleetU) ? wideTxt(r.fleetU, fmt(r.fleetU.total) + '대') : '-') : fmt(v) + ` <small>${esc(r.fleetU.date)}</small>` },
+    { k: 'fleetpc', h: 'PM 기기 (1천 명당)', f: (v, r) => v == null ? '-' : v.toFixed(1) + avgTag(r.fleetU) },
+    { k: 'bikes', h: `공유자전거 (${meta2()})`, f: (v, r) => v == null ? (r.sv?.bikes != null ? wideTxt(r.sv.pub || r.sv.pri, fmt(r.sv.bikes) + '대') : '-') : fmt(v) },
+    { k: 'pmuse', h: 'PM 앱 이용 (1만 명당)', f: (v, r) => v == null ? '-' : v.toFixed(1) + avgTag(r.sv?.pu) }, { k: 'park', h: 'PM 주차구역', f: (v, r) => v == null ? (isWide(r.parkU) ? wideTxt(r.parkU, fmt(r.parkU.n) + '곳') : '-') : fmt(v) },
+    { k: 'parkd', h: `주차구역 (${st.hab ? '생활권 ' : ''}1㎢당)`, f: (v, r) => v == null ? '-' : v.toFixed(1) + avgTag(r.parkU) },
+    { k: 'park20', h: '20곳/㎢ 기준 부족', f: (v, r) => v == null ? '-' : (v > 0 ? pct(v) : '충족') + avgTag(r.parkU) }, { k: 'park30', h: '30곳/㎢ 기준 부족', f: (v, r) => v == null ? '-' : (v > 0 ? pct(v) : '충족') + avgTag(r.parkU) },
     { k: 'pmord', h: 'PM 조례', f: (v, r) => lvText(r.ord, 'o') }, { k: 'move', h: 'PM 조례 이동·견인 근거', f: (v, r) => lvText(r.ord, 'm') }, { k: 'tow', h: 'PM 견인료', f: (v, r) => towText(r.ord) }, { k: 'grace', h: 'PM 견인 유예시간', l: 1, f: (v, r) => r.ord?.t ? graceText(r.ord) : '-' }, { k: 'btow', h: '자전거 견인', f: (v, r) => bikeTow(r.ord) },
     { k: 'stores', h: '상가업소', f: fmt }, { k: 'firms', h: '산업단지 가동업체', f: (v, r) => fmt(v) + (r.icity && v != null ? ` <small title="${esc(r.icity)} 전체 값">시</small>` : '') },
     { k: 'lh', h: 'LH 임대 세대', f: fmt }, { k: 'y2039', h: '20~39세 비중', f: pct }, { k: 'o70', h: '70세 이상 비중', f: pct },
@@ -626,7 +649,7 @@ function renderSgg(rows, m) {
   sggShown = table($('sgg-table'), T.cols ? cols.filter(c => c.k === 'name' || T.cols.includes(c.k)) : cols, sgRows(rows, m), sortSgg, k => { sortSgg = { k, asc: sortSgg.k === k ? !sortSgg.asc : k === 'name' }; render(); },
     r => { pickSggRow(r.sgg); $('dong-title').scrollIntoView({ behavior: 'smooth' }); });
   $('sgg-csv').onclick = () => csv(`시군구_${st.metric}.csv`, ['시군구코드', '시군구', m.name, '인구', '면적_km2', '정류장', '버스철도도보권밖', '노선넉넉한정류장도보권밖', 'PM10분새로닿는면적비율', 'PM잠재지수', '공유PM운영', '공유자전거운영', '공유자전거유형', 'PM조례', 'PM조례이동견인근거', 'PM견인', 'PM견인료', '견인료기준지자체', 'PM견인유예시간', '견인운영비고', '자전거견인', 'PM기기수', 'PM기기단위', 'PM기기기준일', 'PM기기1천명당', '공유자전거대수_2024', 'PM앱이용횟수_1만명당_2024', 'PM주차구역', st.hab ? '주차구역_생활권1km2당' : '주차구역_1km2당', '주차구역20곳기준부족률', '주차구역30곳기준부족률', '상가업소', '산업단지가동업체', 'LH임대세대', '20~39세비중', '70세이상비중', '법정도시지역면적비율', '도시지역거주인구비율', '주민1인당하루승차', '환승통행비중', '경로승차비중', '노선수자료', 'OSM보완', '교통카드자료부족'],
-    sggShown.map(r => [r.sgg, r.name, r.v, r.pop, r.area.toFixed(3), r.stops, r.either, r.good, r.pm, r.pmidx == null ? null : (r.pmidx * 100).toFixed(1), r.pmops, r.bike, r.bikeKind, r.ord ? lvText(r.ord, 'o') : null, r.ord ? lvText(r.ord, 'm') : null, r.ord ? lvText(r.ord, 't') : null, r.ord?.fee, r.ord?.src, r.ord?.t ? r.ord?.grace : null, r.ord?.note, r.ord ? lvText(r.ord, 'b') : null, r.fleet, r.fleetU?.name, r.fleetU?.date, r.fleetpc, r.bikes, r.pmuse, r.park, r.parkd, r.park20, r.park30, r.stores, r.firms, r.lh, r.y2039, r.o70, r.uarea, r.upop, r.trip, r.transfer, r.elder, r.route, r.osm, +r.sparse]));
+    sggShown.map(r => [r.sgg, r.name, r.v, r.pop, r.area.toFixed(3), r.stops, r.either, r.good, r.pm, r.pmidx == null ? null : (r.pmidx * 100).toFixed(1), r.pmops, r.bike, r.bikeKind, r.ord ? lvText(r.ord, 'o') : null, r.ord ? lvText(r.ord, 'm') : null, r.ord ? lvText(r.ord, 't') : null, r.ord?.fee, r.ord?.src, r.ord?.t ? r.ord?.grace : null, r.ord?.note, r.ord ? lvText(r.ord, 'b') : null, r.fleetU?.total, r.fleetU?.name, r.fleetU?.date, r.fleetpc, r.sv?.bikes ?? null, r.pmuse, r.parkU?.n ?? null, r.parkd, r.park20, r.park30, r.stores, r.firms, r.lh, r.y2039, r.o70, r.uarea, r.upop, r.trip, r.transfer, r.elder, r.route, r.osm, +r.sparse]));
 }
 
 function renderDongs(rows, m) {
@@ -656,12 +679,12 @@ function csv(name, head, rows) {
 // Each lens ranks the candidates on a few factors (tie-aware percentile within the candidates, 0–1) and averages them:
 // A 정책 (교통 공백을 PM이 메울 곳), B 사업 (PM 수요가 있을 곳), 종합 = (A + B) / 2. Factors without data are skipped.
 const FOCUS_F = {
-  either: { n: '버스·철도 도보권 밖 면적', f: pct },
-  pm: { n: 'PM 10분 안에 새로 닿는 면적', f: pct },
-  gapPop: { n: '도보권 밖 거주 추정 인구', f: v => fmt(v) + '명' },
+  either: { n: '대중교통까지 걷기 먼 땅', f: v => pp(v) },
+  pm: { n: 'PM 10분이면 닿는 땅', f: v => pp(v) },
+  gapPop: { n: '대중교통에서 먼 주민(추정)', f: v => people(v) },
   pmidx: { n: 'PM 잠재 지수', f: v => (v * 100).toFixed(0) },
-  young: { n: '20·30대 인구', f: v => fmt(v) + '명' },
-  towEase: { n: '견인 부담', f: (v, c) => c.towTxt },
+  young: { n: '20·30대 주민', f: v => people(v) },
+  towEase: { n: '견인', f: (v, c) => c.towTxt },
 };
 const LENS = {
   mix: { name: '종합 (정책 + 사업)', short: '종합' },
@@ -669,6 +692,7 @@ const LENS = {
   b: { name: '사업: PM 수요가 있을 곳', short: '사업', f: ['pmidx', 'young', 'pm', 'towEase'] },
 };
 const lens = () => $('focus-lens')?.value || 'mix';
+const people = v => v == null ? '-' : v >= 1e4 ? `약 ${(v / 1e4).toFixed(1)}만 명` : `${fmt(v)}명`;
 function towBurden(o) {  // higher = heavier: 견인료 (금액 없으면 3만원으로 봄) + 즉시 견인 1만원 상당
   if (!o?.t) return { v: 0, txt: '견인 없음(부담 낮음)' };
   const g = graceMin(o.grace);
@@ -710,7 +734,9 @@ function focusScore(cands) {
 const ranked = (cands, l) => cands.filter(c => c[l] != null).sort((a, b) => b[l] - a[l]);
 const topPct = (i, n) => Math.max(1, Math.ceil((i + 1) / n * 100));
 function focusWhy(c, l) {  // the two strongest factors of the lens
-  const ks = (l === 'mix' ? [...new Set([...LENS.a.f, ...LENS.b.f])] : LENS[l].f).filter(k => c.p?.[k] != null).sort((a, b) => c.p[b] - c.p[a]).slice(0, 2);
+  const all = (l === 'mix' ? [...new Set([...LENS.a.f, ...LENS.b.f])] : LENS[l].f).filter(k => c.p?.[k] != null).sort((a, b) => c.p[b] - c.p[a]);
+  const ks = all.filter(k => c.p[k] >= 0.6).slice(0, 2);  // only factors where it really stands out
+  if (!ks.length && all.length) ks.push(all[0]);
   return ks.map(k => `${FOCUS_F[k].n} ${FOCUS_F[k].f(c[k], c)}`).join(' · ');
 }
 function focusTags(c) {
@@ -761,21 +787,24 @@ function renderHead(scope, x) {
       if (me.a != null && me.a >= 0.7) acts.push(OPS[pickSgg] === 0 ? '공유 PM이 없는 교통 공백 지역: 지자체에 PM 연계 시범사업을 제안할 근거' : '공백이 큰데 공유 PM은 운영 중: 정류장·역 주변 주차구역과 환승 연계 확충을 제안할 곳');
       if (me.b != null && me.b >= 0.7) acts.push(Beam.loaded() ? (Beam.kind(pickSgg) ? `빔 ${Beam.kind(pickSgg)} 지역: 기기·주차구역 확충 우선` : '빔 미운영: 진출 검토 후보') : 'PM 수요 잠재력이 큰 곳');
       if (ORD[pickSgg]?.t && (graceMin(ORD[pickSgg].grace) === 0 || (ORD[pickSgg].fee || 0) >= 40000)) acts.push('견인 부담이 큰 곳: 유예시간·견인료 협의 대상');
-      parts.push(`<p class="verdict"><b>결론: ${verdict}</b> · ${L.short} 점수 전국 ${fmt(nat.length)}곳 중 <b>${i + 1}위</b>(상위 ${p}%)` + (j >= 0 ? `, ${esc(scope[0][C.sidonm])} ${sido.length}곳 중 ${j + 1}위` : '') +
-        `. 강점: ${focusWhy(me, l)}.` + (acts.length ? `<br>→ ${acts.join('<br>→ ')}` : '') + '</p>');
+      parts.push(`<div class="verdict"><b>결론: ${verdict} 지역</b><br>${L.short} 점수로 전국 ${fmt(nat.length)}개 시군구 가운데 <b>${i + 1}위</b>` + (j >= 0 ? `, ${esc(scope[0][C.sidonm])} ${sido.length}곳 가운데 ${j + 1}위` : '') + `입니다.` +
+        `<br>이유: ${focusWhy(me, l)}` + (acts.length ? `<ul>${acts.map(a => `<li>${a}</li>`).join('')}</ul>` : '') + '</div>');
     }
   } else {
     const rk = ranked(focusScore(focusCands(scope, 'sgg')), l).slice(0, 3);
-    if (rk.length) parts.push(`<p class="verdict"><b>결론:</b> ${esc(st.sido ? scope[0][C.sidonm] : '전국')}에서 먼저 볼 곳은 <b>${rk.map(c => esc(nameIn(c))).join(', ')}</b>입니다(${L.short} 점수 상위, 아래 Top 10). ${esc(nameIn(rk[0]))}: ${focusWhy(rk[0], l)}.</p>`);
+    if (rk.length) parts.push(`<div class="verdict"><b>결론: ${esc(st.sido ? scope[0][C.sidonm] : '전국')}에서 먼저 볼 곳은 ${rk.map(c => esc(nameIn(c))).join(', ')}</b><br>1위 ${esc(nameIn(rk[0]))}: ${focusWhy(rk[0], l)}. 전체 순위는 위 Top 10에 있습니다.</div>`);
   }
   // 기본 현황
   const sggs = [...new Set(scope.map(r => r[C.sgg]))], e = M('either').v(x), A = st.hab ? x.hab : x.area, chip = [];
-  if (e != null) chip.push(['대중교통 도보권 밖', `${fmt(e * A)}㎢`, `${st.hab ? '생활권' : '전체'} 면적의 ${pct(e)}`]);
+  if (e != null) chip.push(['대중교통까지 걷기 먼 땅', `${e * A < 10 ? (e * A).toFixed(1) : fmt(e * A)}㎢`, `${st.hab ? '생활권' : '전체'} 면적의 ${pp(e)}`]);
   if (pickSgg) {
     const fu = FLEET[pickSgg], sv = survey(pickSgg), pu = PARKU[pickSgg], pg = unitGap(pu);
-    chip.push(['PM 기기', fu ? `${fmt(fu.total)}대` : '자료 없음', fu ? `${fu.sgg.length > 1 ? esc(fu.name) + ' 전체 · ' : ''}${esc(fu.date)}` : '']);
-    chip.push(['공유자전거', sv?.bikes != null ? `${fmt(sv.bikes)}대` : '자료 없음', sv?.bikes != null ? `${(sv.pub || sv.pri).sgg.length > 1 ? esc((sv.pub || sv.pri).name) + ' 전체 · ' : ''}${meta2()}` : '']);
-    chip.push(['PM 주차구역', pu ? `${fmt(pu.n)}곳` : '자료 없음', pg ? `1㎢당 ${pg.d.toFixed(1)}곳${pu.sgg.length > 1 ? ' · ' + esc(pu.name) + ' 전체' : ''}` : '']);
+    // a count kept only for a whole 시도·시 is not this 시군구's own: say so instead of showing it as if it were
+    const cnt = (u, n, unit) => !u || n == null ? ['자료 없음', ''] : isWide(u) ? ['시군구별 자료 없음', `${esc(unitShort(u))} 전체 ${fmt(n)}${unit}`] : [`${fmt(n)}${unit}`, ''];
+    const [fv, fs] = cnt(fu, fu?.total, '대'), [bv, bs] = cnt(sv?.pub || sv?.pri, sv?.bikes, '대'), [kv, ks] = cnt(pu, pu?.n, '곳');
+    chip.push(['PM 기기', fv, [fs, fu ? esc(fu.date) : ''].filter(Boolean).join(' · ')]);
+    chip.push(['공유자전거', bv, [bs, sv?.bikes != null ? meta2() : ''].filter(Boolean).join(' · ')]);
+    chip.push(['PM 주차구역', kv, [ks, pg ? `1㎢당 ${pg.d.toFixed(1)}곳` : ''].filter(Boolean).join(' · ')]);
     chip.push(['공유 PM', OPS[pickSgg] == null ? '-' : OPS[pickSgg] ? '운영' : '미운영', opsDate()]);
     if (Beam.loaded()) chip.push(['빔모빌리티', Beam.kind(pickSgg) || '미운영', '']);
   } else {

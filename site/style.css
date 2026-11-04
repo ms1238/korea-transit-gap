@@ -143,3 +143,27 @@ footer { color: var(--muted); font-size: 12px; padding-bottom: 30px; }
 .chip b { font-size: 16px; }
 .chip small { font-size: 11px; color: var(--muted); }
 @media (max-width: 640px) { .focus-list { grid-template-columns: 1fr; } .chips { grid-template-columns: repeat(2, 1fr); } }
+
+/* region picker: on top, stays in view while scrolling */
+.region-bar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+  background: var(--surface); border-bottom: 1px solid var(--line); padding: 8px 16px; margin-top: 6px; margin-bottom: 8px; }
+.region-bar label { color: var(--ink-2); }
+.region-bar select { font-size: 14px; }
+@media (max-width: 640px) {
+  .region-bar { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px 8px; font-size: 12px; }
+  .region-bar label:not(.chk) { display: flex; flex-direction: column; gap: 2px; }
+  .region-bar select { width: 100%; font-size: 13px; }
+  .region-bar .chk { grid-column: 1 / -1; }
+}
+
+/* 지역별 인사이트: short groups with a plain heading each */
+.ins-group h3 { font-size: 14px; margin: 12px 0 2px; color: var(--ink-2); font-weight: 600; }
+.ins-group ul { margin: 2px 0 4px; padding-left: 18px; }
+.ins-group li { margin: 3px 0; line-height: 1.55; }
+.ins-notes { margin: 8px 0 4px; font-size: 12px; color: var(--muted); }
+.ins-notes summary { cursor: pointer; }
+.ins-notes ul { padding-left: 18px; margin: 4px 0; }
+small.wide { color: var(--muted); }
+.verdict ul { margin: 4px 0 0; padding-left: 18px; }
+.verdict li { margin: 2px 0; }
+header.intro { padding-top: 0; }
