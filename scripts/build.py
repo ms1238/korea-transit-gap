@@ -25,6 +25,8 @@
 5. Monthly 교통카드 trips per 시군구 (교통수단별 이용량, 환승 이용량), as a daily average of 출발·승차 통행. Under
    TRIPS_MIN trips per resident a day the card data barely covers the 시군구 (e.g. 곡성·음성·청송, a few dozen trips a
    day; all of them lack stop-level route counts too), so it is flagged sparse instead of read as no riders.
+5b. 공유 PM 운영 per 시군구 (end of 2024) from scripts/static/pm_ops.csv, read off the 국토교통부 survey map (see
+    pm_ops_csv.py).
 6. 법정 도시지역 (국토계획법 용도지역) area and population shares per 시군구 from the 도시계획현황 statistics.
 
 Outputs (site/data): dongs.geojson (simplified boundaries), stats.json (one row per 행정동 + metadata), stops.json,
@@ -48,7 +50,7 @@ from scipy.stats import rankdata
 
 RAW = os.path.join(os.path.dirname(__file__), "..", "raw")
 OUT = os.path.join(os.path.dirname(__file__), "..", "site", "data")
-BUS_M, RAIL_M = 500, 1000
+BUS_M, RAIL_M = 500, 500  # walking reach of a stop or station: 국토교통부's DRT access test (출발지 500m 이내 정류장, 2025 첨단모빌리티 현황조사)
 GOOD_ROUTES = 3  # a stop with fewer routes counts as sparsely served
 OSM_FILL, DEDUP_M = 0.5, 50
 ROUTE_MATCH_MIN = 0.6
@@ -368,6 +370,23 @@ def load_upis(dongs):
     return out, rows[0]["기준연도"] if rows else None
 
 
+def load_pm_ops(dongs):
+    """공유 PM 운영 (1/0) per current 시군구 code from scripts/static/pm_ops.csv, and its 기준일; by code, else by name."""
+    path = os.path.join(os.path.dirname(__file__), "static", "pm_ops.csv")
+    if not os.path.exists(path):
+        return {}, None
+    with open(path, encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    by_code = {r["시군구코드"]: r for r in rows}
+    by_name = {(r["시도"], r["시군구"]): r for r in rows}
+    out = {}
+    for d in dongs:
+        r = by_code.get(d["sgg"]) or by_name.get((d["sidonm"], d["sggnm"]))
+        if r:
+            out[d["sgg"]] = int(r["공유PM운영"])
+    return out, rows[0]["기준"] if rows else None
+
+
 def main():
     os.makedirs(os.path.join(OUT, "download"), exist_ok=True)
     adm = load("admin_dong.json")
@@ -592,7 +611,7 @@ def main():
             sum_rte[i] += s_rte_ok[j]
     cols = ["code", "name", "sido", "sidonm", "sgg", "sggnm", "type", "pop", "area_km2", "stops", "stops_known", "stops_few",
             "routes_sum", "route_ok", "osm_fill", "stop_gap", "stores", "pm_index", "y2039", "o70", "hab",
-            "bus500", "rail1k", "either", "good500", "walk", "pm5", "pm10", "steep", "far"]
+            "bus500", "rail500", "either", "good500", "walk", "pm5", "pm10", "steep", "far"]
     cols += ["h_" + c for c in cols[-9:]]  # the same shares over 생활권 land
 
     def shares(v, ok, gap):
@@ -627,10 +646,13 @@ def main():
     print(f"trips sparse (< {TRIPS_MIN} a resident a day): " + ", ".join(sorted(name_of(g) for g, v in sgg_trips.items() if v["sparse"]))
           + "; none: " + (", ".join(sorted(name_of(g) for g in set(sgg_of) if g not in sgg_trips)) or "-"), flush=True)
     upis, upis_year = load_upis(dongs)
+    pm_ops, pm_ops_date = load_pm_ops(dongs)
+    print(f"공유 PM 운영 ({pm_ops_date or '-'}): {sum(pm_ops.values())} of {len(pm_ops)} 시군구 operate; "
+          f"no figure: {', '.join(sorted({d['sggnm'] for d in dongs if d['sgg'] not in pm_ops})) or '-'}", flush=True)
     nogo = sorted({d["sidonm"] + " " + d["sggnm"] for d in dongs if d["sgg"] not in upis})
     print(f"도시지역 ({upis_year}): {len(upis)} of {len(set(sgg_of))} 시군구; without: {', '.join(nogo) or '-'}", flush=True)
     meta = {"boundary": adm["ver"], "trips_months": tmonths, "upis_year": upis_year, "pop_ym": pop_raw["ym"], "stops_collected": sm["collected"], "route_days": rdays,
-            "n_stops": int(len(s_lon)), "n_osm_added": int(add.sum()), "n_stations": len(stations), "stores_ym": store_ym, "age_ym": age_ym, "age_dong_ym": ad["ym"], "pm_index_age": use_age,
+            "n_stops": int(len(s_lon)), "n_osm_added": int(add.sum()), "n_stations": len(stations), "stores_ym": store_ym, "pm_ops_date": pm_ops_date, "age_ym": age_ym, "age_dong_ym": ad["ym"], "pm_index_age": use_age,
             "industrial_date": next(iter(ind.values()))["date"] if ind else None, "lh_table": lh_table(),
             "bus_m": BUS_M, "rail_m": RAIL_M, "grid_m": round(PIX_M * math.cos(math.radians(36))), "good_routes": GOOD_ROUTES,
             "pm_speed": PM_SPEED_KMH, "pm_detour": PM_DETOUR, "pm5_m": PM5_M, "pm10_m": PM10_M, "pm_index_min": PM_INDEX_MIN, "trips_min": TRIPS_MIN,
@@ -638,7 +660,7 @@ def main():
 "steep_sens": steep_sens, "landcover": hab_grid is not None,
             "grid_bounds": [[LON0, inv_merc_y(merc_y(LAT1))], [LON0 + np.degrees(W * PIX_M / R_EARTH), inv_merc_y(merc_y(LAT1) - H * PIX_M)]]}
     with open(os.path.join(OUT, "stats.json"), "w", encoding="utf-8") as f:
-        json.dump({"meta": meta, "cols": cols, "rows": rows, "sgg_trips": sgg_trips, "sgg_urban": upis, "sgg_industrial": ind, "sgg_lh": lh, "sgg_age": age},
+        json.dump({"meta": meta, "cols": cols, "rows": rows, "sgg_trips": sgg_trips, "sgg_urban": upis, "sgg_industrial": ind, "sgg_lh": lh, "sgg_age": age, "sgg_pm_ops": pm_ops},
                   f, ensure_ascii=False, separators=(",", ":"))
     feats = []
     for i, g in enumerate(geoms):
