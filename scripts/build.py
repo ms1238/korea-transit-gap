@@ -457,6 +457,8 @@ def region_resolver(dongs):
         region = re.sub(r"\(.*?\)", "", str(region or "")).strip()
         if region in sido_all:
             return sorted(sido_all[region])
+        if region == "광주광역시":  # merged into 전남광주통합특별시 in 2026: its former 구
+            return sorted(g for (s_, n), g in sggs.items() if s_ == "12" and n.endswith("구"))
         parts = re.split(r"[-\s]", region, maxsplit=1)
         sido, name = IND_SIDO.get(parts[0]), parts[-1].strip()
         if (sido, name) in sggs:
@@ -474,6 +476,37 @@ def region_resolver(dongs):
     return codes
 
 
+SURVEY_DATE = "2024-12-31"
+SURVEY_SRC = "국토교통부 2025년 첨단모빌리티 현황조사 (2024년 말)"
+
+
+def load_survey():
+    """scripts/static/kotsa_2025.csv: the survey's tables per 지역 (2024년 말): 공유 PM 운영 대수 [표 2-16] and 이용 횟수
+    [표 2-17, 모바일 앱 사용량 기반], 공유자전거 공영·민영 운영 대수 and 민영 이용 횟수 [표 2-15]."""
+    path = os.path.join(os.path.dirname(__file__), "static", "kotsa_2025.csv")
+    if not os.path.exists(path):
+        return []
+    out = []
+    with open(path, encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            num = lambda k: float(r[k]) if r[k] != "" else None
+            out.append({"region": f"{r['시도']} {r['시군구']}".strip(), "pm": int(num("공유PM운영대수")) if r["공유PM운영대수"] else None, "pm_use": num("공유PM이용횟수"),
+                        "bike_pub": num("공유자전거공영대수"), "bike_pub_name": r["공영서비스명"], "bike_pri": num("공유자전거민영대수"),
+                        "bike_use": num("공유자전거민영이용횟수")})
+    return out
+
+
+def survey_units(survey, codes, unit_name, gpop):
+    """The survey's other figures per 지역 unit: [{name, sgg, pop, pm_use, bike_pub, bike_pub_name, bike_pri, bike_use}]."""
+    out = []
+    for r in survey:
+        cs = codes(r["region"])
+        if cs and any(r[k] is not None for k in ("pm_use", "bike_pub", "bike_pri", "bike_use")):
+            out.append({"name": unit_name(cs), "sgg": cs, "pop": sum(gpop[g] for g in cs),
+                        **{k: r[k] for k in ("pm_use", "bike_pub", "bike_pub_name", "bike_pri", "bike_use")}})
+    return out
+
+
 def write_pm_supply(dongs, pop, tree):
     """PM 기기 수 and 주차구역 (site/data/pm.json): units (one per 지역 of the sources, as current 시군구 codes) with their
     devices (전동킥보드, 전기자전거, or not told apart), 운영사 (named, else a count), 기준일 and source; the 서울 companies per 구;
@@ -482,7 +515,11 @@ def write_pm_supply(dongs, pop, tree):
     info = {x["sgg"]: (x["sidonm"], x["sggnm"]) for x in dongs}
     sido_n = collections.Counter(v[0] for v in info.values())
 
+    gwangju = sorted(codes("광주광역시"))
+
     def unit_name(cs):  # 시도 alone, a 시 with 구 by the 시, else the 시군구
+        if len(cs) > 1 and sorted(cs) == gwangju:
+            return "광주광역시 (2026년 통합 전)"
         sd = {info[g][0] for g in cs}
         if len(sd) == 1 and len(cs) == sido_n[next(iter(sd))] and len(cs) > 1:
             return next(iter(sd))
@@ -505,13 +542,19 @@ def write_pm_supply(dongs, pop, tree):
                 if r["지역"] == "서울특별시":
                     for gu in r["비고(운영구·종류)"].split(","):
                         seoul_gu[gu.strip()].add(r["운영사"])
+    survey = load_survey()
+    for r in survey:
+        if r["pm"] is not None:
+            recs.append({"region": r["region"], "operator": None, "ops_n": None, "kick": None, "bike": None, "total": r["pm"],
+                         "date": SURVEY_DATE, "source": SURVEY_SRC + " [표 2-16]"})
+    # one unit per 지역 and source; each 시군구 then takes the newest unit covering it (the more specific on a tie)
     units, lost = {}, collections.Counter()
     for r in recs:
         cs = codes(r["region"])
         if not cs:
             lost[r["region"]] += 1
             continue
-        u = units.setdefault(tuple(cs), {"name": unit_name(cs), "sgg": cs, "pop": sum(gpop[g] for g in cs),
+        u = units.setdefault((tuple(cs), r["source"]), {"name": unit_name(cs), "sgg": cs, "pop": sum(gpop[g] for g in cs),
                                           "kick": 0, "bike": 0, "mixed": 0, "ops": collections.Counter(), "ops_n": 0, "companies": set(),
                                           "dates": set(), "sources": set()})
         for k in ("kick", "bike"):
@@ -524,13 +567,29 @@ def write_pm_supply(dongs, pop, tree):
         u["ops_n"] = max(u["ops_n"], r["ops_n"] or 0)
         u["dates"].add(r["date"] or "")
         u["sources"].add(r["source"])
-    fleet = []
-    for u in units.values():
+    ulist = list(units.values())
+    for u in ulist:
+        u["date"] = max((d for d in u["dates"] if d), default="")
+    pick = {}
+    for i, u in enumerate(ulist):
+        for g in u["sgg"]:
+            j = pick.get(g)
+            if j is None or (u["date"], -len(u["sgg"])) > (ulist[j]["date"], -len(ulist[j]["sgg"])):
+                pick[g] = i
+    used = sorted(set(pick.values()))
+    fleet, by_sgg = [], {}
+    for i in used:
+        u = ulist[i]
         n_ops = len(u["ops"]) or len(u["companies"]) or u["ops_n"] or None
+        mine = [g for g in u["sgg"] if pick[g] == i]
         fleet.append({"name": u["name"], "sgg": u["sgg"], "pop": u["pop"], "kick": u["kick"] or None, "bike": u["bike"] or None,
                       "mixed": u["mixed"] or None, "total": u["kick"] + u["bike"] + u["mixed"],
                       "ops": [[o, n] for o, n in u["ops"].most_common()], "n_ops": n_ops,
-                      "date": " · ".join(sorted(d for d in u["dates"] if d)), "source": " · ".join(sorted(u["sources"]))})
+                      "date": " · ".join(sorted(d for d in u["dates"] if d)), "source": " · ".join(sorted(u["sources"])),
+                      "partial": len(mine) < len(u["sgg"])})  # some of its 시군구 have newer or finer figures: left out of totals
+        for g in mine:
+            by_sgg[g] = len(fleet) - 1
+    dropped = [f"{u['name']} {u['date']}" for i, u in enumerate(ulist) if i not in set(used)]
     # 서울: devices only for the whole city; companies per 구
     sgg_by_name = {(x["sidonm"], x["sggnm"]): x["sgg"] for x in dongs}
     seoul = {sgg_by_name[("서울특별시", gu)]: len(cs) for gu, cs in seoul_gu.items() if ("서울특별시", gu) in sgg_by_name}
@@ -562,9 +621,11 @@ def write_pm_supply(dongs, pop, tree):
     park = [[round(p["lon"], 6), round(p["lat"], 6), p["name"] or "", p["kind"] or "", str(p["cap"] or ""), si[(p["source"], p["date"] or "")]]
             for p in xy]
     with open(os.path.join(OUT, "pm.json"), "w", encoding="utf-8") as f:
-        json.dump({"fleet": fleet, "seoul_companies": seoul, "parking": park, "parking_sources": sources, "parking_units": parking_units},
+        json.dump({"fleet": fleet, "fleet_by_sgg": by_sgg, "survey": survey_units(survey, codes, unit_name, gpop), "survey_date": SURVEY_DATE,
+                   "seoul_companies": seoul, "parking": park, "parking_sources": sources, "parking_units": parking_units},
                   f, ensure_ascii=False, separators=(",", ":"))
-    print(f"PM fleet: {len(fleet)} units, {sum(u['total'] for u in fleet):,} devices; not mapped: "
+    print(f"PM fleet: {len(fleet)} units ({sum(u['partial'] for u in fleet)} partly superseded), "
+          f"{sum(u['total'] for u in fleet if not u['partial']):,} devices; superseded by newer figures: {', '.join(dropped) or '-'}; not mapped: "
           + (", ".join(f"{k} {v}" for k, v in lost.items()) or "-")
           + f"; parking: {len(pts)} zones in {len(parking_units)} units ({len(park)} with coordinates), not mapped: "
           + (", ".join(f"{k} {v}" for k, v in plost.items()) or "-"), flush=True)
