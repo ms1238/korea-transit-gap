@@ -11,6 +11,16 @@
 <header>
   <nav class="tabs"><a href="#all" data-tab="all" class="on" aria-current="page">종합<small>어디부터 봐야 하나?</small></a><a href="#pm" data-tab="pm">공백·PM 연계·공급<small>어디가 비었고, PM이 메울 수 있나?</small></a><a href="#policy" data-tab="policy">제도·규제<small>무엇이 PM을 막고 있나?</small></a><a href="accidents.html">안전 (합성데이터)<small>사고는 어떤 경향인가?</small></a><a href="about.html">자료·방법<small>어떻게 계산했나?</small></a></nav>
   <h1>PM 대동여지도</h1>
+</header>
+
+<section class="region-bar" aria-label="지역 선택">
+  <label>시도 <select id="sido"><option value="">전국</option></select></label>
+  <label>시군구 <select id="sgg"><option value="">전체</option></select></label>
+  <label>읍면동 <select id="dong"><option value="">전체</option></select></label>
+  <label class="chk"><input type="checkbox" id="urban"> 동 지역만</label>
+</section>
+
+<header class="intro">
   <p class="sub">행정동별로 버스 정류장·철도역에서 걸어서 닿기 어려운 면적, 정류장은 있어도 노선이 드문 곳, 그리고 걷기엔 멀지만 PM(개인형 이동장치)으로 5~10분이면 정류장·역에 닿는 곳을 보여 줍니다. <a href="about.html">지표 설명·출처·한계</a></p>
   <p class="sub" id="asof"></p>
 </header>
@@ -25,20 +35,16 @@
 <section class="insights">
   <h2 id="ins-title">지역별 인사이트</h2>
   <div id="ins-head"></div>
-  <ul id="insights"></ul>
+  <div id="insights"></div>
   <button class="more" id="ins-more" type="button" hidden></button>
-  <p class="note">아래에서 시도·시군구를 고르거나 '동 지역만'을 켜면 그 범위로 다시 정리됩니다. 숫자는 면적 기준(기본은 산림·수면을 뺀 생활권 면적)이며 자료가 있는 곳만 셉니다.</p>
+  <p class="note">맨 위에서 지역을 고르면 그 지역 기준으로 다시 정리됩니다. 면적은 산과 강을 뺀 생활권 면적 기준입니다.</p>
 </section>
 
 <section class="controls">
   <div class="selects">
     <label data-tabs="all pm">지표 <select id="metric"></select></label>
-    <label>시도 <select id="sido"><option value="">전국</option></select></label>
-    <label>시군구 <select id="sgg"><option value="">전체</option></select></label>
-    <label>읍면동 <select id="dong"><option value="">전체</option></select></label>
   </div>
   <div class="opts">
-    <label class="chk"><input type="checkbox" id="urban"> 동 지역만</label>
     <label class="chk" title="ESA WorldCover 토지피복에서 산림·수면·습지를 빼고 시가지·농지·초지만으로 비율을 냅니다"><input type="checkbox" id="hab" checked> 산림·수면 제외 (생활권 면적)</label>
     <label class="chk" data-tabs="all pm" title="서울·경기·천안·김해·화성 동탄·부산 일부 구의 PM 주차구역 위치"><input type="checkbox" id="show-park"> PM 주차구역 보기</label>
     <label class="chk" title="빔모빌리티 운영 시군구: 직영은 파란 실선, 프랜차이즈는 청록 점선"><input type="checkbox" id="show-beam"> 빔 운영지역</label>
