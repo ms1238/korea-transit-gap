@@ -33,7 +33,8 @@ const METRICS = [
 const M = id => METRICS.find(m => m.id === id);
 
 let D, C, GEO, T, U, IND, LH, AGE, OPS, SGGPOP, meta, map, sortSgg = { k: 'v', asc: false }, sortDong = { k: 'v', asc: false }, pickSgg = null;
-const st = { metric: 'either', sido: '', urban: false, hab: true };
+const NARROW = window.matchMedia('(max-width: 640px)').matches;  // phones: legend and layer list start folded
+const st = { metric: 'either', sido: '', urban: false, hab: true, legend: !NARROW, insMore: false };
 const K = k => C[(st.hab ? 'h_' : '') + k];  // the column of an area share on the current basis
 const basis = () => st.hab ? '생활권 면적(산림·수면 제외)' : '전체 면적';
 
@@ -80,6 +81,12 @@ async function main() {
   };
   fillSgg();
   $('urban').onchange = e => { st.urban = e.target.checked; render(); };
+  $('layers').open = !NARROW;
+  const showLegend = on => { st.legend = on; $('legend').hidden = !on; $('legend-btn').hidden = on; };
+  $('legend-btn').onclick = () => showLegend(true);
+  $('legend').onclick = e => { if (e.target.closest('.legend-x')) showLegend(false); };
+  showLegend(st.legend);
+  $('ins-more').onclick = () => { st.insMore = !st.insMore; renderInsights(); };
   if (!meta.landcover) { st.hab = false; $('hab').checked = false; $('hab').disabled = true; }
   $('hab').onchange = e => { st.hab = e.target.checked; render(); };
   GEO = geo;
@@ -282,20 +289,29 @@ function renderInsights() {
   if (gaps.length) li.push(`<small>정류장 위치 자료가 부족해 버스 지표를 뺀 곳: ${gaps.map(esc).join(', ')}</small>`);
   if (noRoute) li.push(`<small>정차 노선수 자료가 없거나 수집 중인 시군구 ${noRoute}곳은 노선 관련 지표가 비어 있습니다.</small>`);
   if (noCard) li.push(`<small>교통카드 자료가 거의 없는 시군구 ${noCard}곳은 승차·환승 값을 '자료 부족'으로 표시합니다.</small>`);
-  $('insights').innerHTML = li.map(s => `<li>${s}</li>`).join('');
+  const cut = NARROW && !st.insMore ? 3 : li.length;
+  $('insights').innerHTML = li.slice(0, cut).map(s => `<li>${s}</li>`).join('');
+  $('ins-more').hidden = !NARROW || li.length <= 3;
+  $('ins-more').textContent = st.insMore ? '접기' : `더 보기 (${li.length - 3})`;
 }
 
 function legend(m) {
   const lab = m.idx ? ['0~20', '20~40', '40~60', '60~80', '80~100'] : ['0~20%', '20~40%', '40~60%', '60~80%', '80~100%'];
-  $('legend').innerHTML = `<div class="t">${esc(m.name)}</div>` + RAMP.map((c, i) => `<div class="row"><i style="background:${c}"></i>${lab[i]}</div>`).join('') +
-    `<div class="row"><i style="background:${NODATA}"></i>자료 없음</div>` +
-    `<div class="row" style="margin-top:4px"><i class="pt" style="background:#eb6834"></i>정류장(노선 ${meta.good_routes - 1}개 이하)</div>` +
-    `<div class="row"><i class="pt" style="background:#52514e"></i>정류장(노선 ${meta.good_routes}개 이상)</div>` +
-    `<div class="row"><i class="pt" style="background:#a3a29c"></i>정류장(노선 수 자료 없음)</div>` +
-    `<div class="row"><i class="pt" style="background:#6250d6;border:1.5px solid #fff;outline:1px solid #6250d6"></i>철도역</div>` +
-    ($('show-grid').checked ? '<div class="row" style="margin-top:4px"><b>PM 연계 격자</b></div>' + [['#eb6834', 'PM 5분권'], ['#f6b38f', 'PM 10분권'], ['rgba(24,118,110,.75)', '경사로 PM 곤란'], ['rgba(82,81,78,.55)', 'PM으로도 먼 곳'], ['rgba(214,213,208,.75)', '정류장 자료 부족'], ['rgba(150,168,128,.45)', '산림·수면 (생활권 밖)']].map(([c, t]) => `<div class="row"><i style="background:${c}"></i>${t}</div>`).join('') + '<div class="row"><small>도보권은 투명</small></div>' : '') +
+  const row = (c, t, cls = '') => `<div class="row"><i class="${cls}" style="background:${c}"></i>${t}</div>`;
+  const stop = [['#eb6834', `노선 ${meta.good_routes - 1}개 이하`], ['#52514e', `${meta.good_routes}개 이상`], ['#a3a29c', '노선 수 모름']];
+  const grid = [['#eb6834', 'PM 5분권'], ['#f6b38f', 'PM 10분권'], ['rgba(24,118,110,.75)', '경사로 PM 곤란'], ['rgba(82,81,78,.55)', 'PM으로도 먼 곳'], ['rgba(214,213,208,.75)', '정류장 자료 부족'], ['rgba(150,168,128,.45)', '산림·수면 (생활권 밖)']];
+  const rail = '<i class="pt" style="background:#6250d6;border:1.5px solid #fff;outline:1px solid #6250d6"></i>';
+  // phones: the colour scale as one bar and the stop kinds on one line, so the legend leaves the map visible
+  const scale = NARROW
+    ? `<div class="bar">${RAMP.map(c => `<i style="background:${c}"></i>`).join('')}</div><div class="bar-l"><span>${m.idx ? '0' : '0%'}</span><span>${m.idx ? '100' : '100%'}</span></div>` + row(NODATA, '자료 없음')
+    : RAMP.map((c, i) => row(c, lab[i])).join('') + row(NODATA, '자료 없음');
+  const stops = NARROW
+    ? `<div class="row wrap" style="margin-top:4px">정류장 ${stop.map(([c, t]) => `<span><i class="pt" style="background:${c}"></i>${t}</span>`).join('')}<span>${rail}철도역</span></div>`
+    : `<div style="margin-top:4px"></div>` + stop.map(([c, t]) => row(c, `정류장(${t})`, 'pt')).join('') + `<div class="row">${rail}철도역</div>`;
+  $('legend').innerHTML = `<div class="t"><span>${esc(m.name)}</span><button class="legend-x" type="button" aria-label="범례 닫기">×</button></div>` + scale + stops +
+    ($('show-grid').checked ? '<div class="row" style="margin-top:4px"><b>PM 연계 격자</b> <small>(도보권은 투명)</small></div>' + grid.map(([c, t]) => row(c, t)).join('') : '') +
     ($('show-noops').checked ? `<div class="row" style="margin-top:4px"><i style="background:repeating-linear-gradient(135deg,#2e2d2a 0 1.5px,transparent 1.5px 5px)"></i>공유 PM 미운영 시군구 (${opsDate()})</div>` : '') +
-    ($('show-terrain').checked || $('show-3d').checked ? `<div class="row" style="margin-top:4px"><small>${$('show-terrain').checked ? '지형 음영: 짙을수록 급한 경사(북서쪽 빛 가정). ' : ''}${$('show-3d').checked ? '3D: 높이 1.6배 과장. 오른쪽 위 나침반을 누르면 정북으로 돌아갑니다.' : ''}</small></div>` : '') +
+    ($('show-terrain').checked || $('show-3d').checked ? `<div class="row" style="margin-top:4px"><small>${$('show-terrain').checked ? '지형 음영: 짙을수록 급한 경사. ' : ''}${$('show-3d').checked ? '3D: 높이 1.6배 과장, 나침반을 누르면 정북으로.' : ''}</small></div>` : '') +
     `<div class="row"><small>정류장은 확대(줌 10 이상)하면 보입니다.</small></div>`;
 }
 
