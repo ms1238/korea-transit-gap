@@ -56,7 +56,7 @@ jobs:
         run: echo "site=${{ hashFiles('site/index.html') != '' }}" >> "$GITHUB_OUTPUT"
       - name: Version the page assets so browsers do not mix a new page with cached old scripts
         if: steps.site.outputs.site == 'true'
-        run: sed -i -E "s/(app\.js|accidents\.js|style\.css)\"/\1?v=${GITHUB_SHA::7}\"/g" site/index.html site/accidents.html
+        run: sed -i -E "s/(app\.js|accidents\.js|beam\.js|young\.js|style\.css)\"/\1?v=${GITHUB_SHA::7}\"/g" site/index.html site/accidents.html
       - uses: actions/configure-pages@v5
         if: steps.site.outputs.site == 'true'
       - uses: actions/upload-pages-artifact@v3

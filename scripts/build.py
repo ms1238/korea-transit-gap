@@ -263,7 +263,7 @@ def load_stores(tree, dongs):
     return n, ok, max(yms - {""}, default=None)
 
 
-IND_SIDO = {"서울": "11", "부산": "26", "대구": "27", "인천": "28", "광주": "12", "전남": "12", "대전": "30", "울산": "31", "세종": "36",
+IND_SIDO = {"서울": "11", "부산": "26", "대구": "27", "인천": "28", "광주": "12", "전남": "12", "전남광주": "12", "대전": "30", "울산": "31", "세종": "36",
             "경기": "41", "강원": "51", "충북": "43", "충남": "44", "전북": "52", "경북": "47", "경남": "48", "제주": "50"}
 
 
@@ -442,6 +442,20 @@ def load_ordinance(dongs):
                          "b": flag("자전거 견인 여부"), "fee": fee, "planned": planned, "src": src,
                          "own": [n for n in ((r or {}).get("PM조례명"), (r or {}).get("견인조례명")) if n],
                          "wide": [[x["지자체명"], *[n for n in (x.get("PM조례명"), x.get("견인조례명")) if n]] for x in ws]}
+    practice = os.path.join(os.path.dirname(__file__), "static", "towing_practice.csv")
+    if os.path.exists(practice):  # 실제 견인 운영 현황: overrides what the ordinances say (견인 여부, 견인료), adds 유예시간
+        resolve = region_resolver(dongs)
+        with open(practice, encoding="utf-8") as f:
+            prs = [(r, resolve(r["지역"])) for r in csv.DictReader(f)]
+        for r, codes in sorted(prs, key=lambda x: -len(x[1])):  # a whole 광역 first, then the 시군구 named on their own
+            if not codes:
+                print(f"  towing practice: {r['지역']} not mapped", flush=True)
+            for g in codes:
+                o = out.setdefault(g, {"o": 0, "m": 0, "t": 0, "b": 0, "fee": None, "planned": False, "src": None, "own": [], "wide": []})
+                t = int(r["PM견인"] == "1")
+                o.update(t=t, fee=int(r["견인료"]) if t and r["견인료"] else None, planned=False, src=r["지역"] if t else None,
+                         grace=r["유예시간"] or None, note=r["비고"] or None, practice=r["출처"])
+        print(f"towing practice: {len(prs)} regions, {sum(len(c) for _, c in prs)} 시군구", flush=True)
     return out
 
 
@@ -679,6 +693,33 @@ def write_accidents(dongs, pop):
                   f, ensure_ascii=False, separators=(",", ":"))
     print(f"PM accidents ({d.get('title')}): {len(rows)} records in {len(units)} units; not mapped: "
           + (", ".join(f"{k} {v}" for k, v in lost.items()) or "-"), flush=True)
+
+
+def write_beam(dongs, geoms):
+    """site/data/beam.geojson: 빔모빌리티 운영지역 (scripts/static/beam_areas.csv, 직영 / 프랜차이즈) as one outline per
+    시군구 (its 행정동 merged), so the map can draw the areas without the 행정동 lines inside them."""
+    path = os.path.join(os.path.dirname(__file__), "static", "beam_areas.csv")
+    if not os.path.exists(path):
+        return
+    resolve = region_resolver(dongs)
+    by_sgg = defaultdict(list)
+    for d, g in zip(dongs, geoms):
+        by_sgg[d["sgg"]].append(g)
+    name = {d["sgg"]: f"{d['sidonm']} {d['sggnm']}" for d in dongs}
+    feats, lost = [], []
+    with open(path, encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            codes = resolve(r["지역"])
+            if not codes:
+                lost.append(r["지역"])
+            for g in codes:
+                geom = shapely.union_all(by_sgg[g]).simplify(0.0003)
+                feats.append({"type": "Feature", "properties": {"sgg": g, "name": name[g], "area": r["지역"], "kind": r["운영형태"]},
+                              "geometry": json.loads(shapely.to_geojson(shapely.set_precision(geom, 1e-5)))})
+    with open(os.path.join(OUT, "beam.geojson"), "w", encoding="utf-8") as f:
+        json.dump({"type": "FeatureCollection", "features": feats}, f, ensure_ascii=False, separators=(",", ":"))
+    print(f"Beam areas: {len(feats)} 시군구 (직영 {sum(x['properties']['kind'] == '직영' for x in feats)}, "
+          f"프랜차이즈 {sum(x['properties']['kind'] == '프랜차이즈' for x in feats)}); not mapped: {', '.join(lost) or '-'}", flush=True)
 
 
 def main():
@@ -984,8 +1025,9 @@ def main():
                    + ["전체면적_" + x for x in share] + ["생활권면적_" + x for x in share])
         w.writerows(rows)
     write_accidents(dongs, pop)
+    write_beam(dongs, geoms)
     write_pm_supply(dongs, pop, tree)
-    for name in ("stats.json", "dongs.geojson", "stops.json", "stations.json", "pmgrid.png"):
+    for name in ("stats.json", "dongs.geojson", "stops.json", "stations.json", "pmgrid.png", "beam.geojson"):
         print(f"  {name}: {os.path.getsize(os.path.join(OUT, name)) / 1e6:.1f} MB", flush=True)
 
 

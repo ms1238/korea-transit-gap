@@ -41,7 +41,7 @@ const TABS = {
   all: { name: '종합', ins: null, cols: null },
   pm: { name: '공백·PM 연계·공급', ins: ['gap', 'pm', 'supply'],
     cols: ['v', 'pop', 'area', 'stops', 'either', 'good', 'pm', 'pmidx', 'fleet', 'fleetpc', 'bikes', 'pmuse', 'park', 'parkd', 'park20', 'park30', 'pmops', 'bike', 'stores', 'firms', 'lh', 'y2039', 'o70', 'trip', 'transfer', 'elder'] },
-  policy: { name: '제도·규제', ins: ['policy'], cols: ['pop', 'pmord', 'move', 'tow', 'btow', 'pmops', 'bike', 'uarea', 'upop'] },
+  policy: { name: '제도·규제', ins: ['policy'], cols: ['pop', 'pmord', 'move', 'tow', 'grace', 'btow', 'pmops', 'bike', 'uarea', 'upop'] },
 };
 const K = k => C[(st.hab ? 'h_' : '') + k];  // the column of an area share on the current basis
 const basis = () => st.hab ? '생활권 면적(산림·수면 제외)' : '전체 면적';
@@ -92,7 +92,7 @@ async function main() {
     zoomTo([D[i]]);
     const c = GEO.features[i].geometry, ring = c.type === 'Polygon' ? c.coordinates[0] : c.coordinates[0][0];
     const ll = ring.reduce((p, q) => [p[0] + q[0] / ring.length, p[1] + q[1] / ring.length], [0, 0]);
-    new maplibregl.Popup({ maxWidth: '300px' }).setLngLat(ll).setHTML(dongPopup(D[i])).addTo(map);
+    new maplibregl.Popup({ maxWidth: '340px', className: 'dong-pop' }).setLngLat(ll).setHTML(dongPopup(D[i])).addTo(map);
   };
   fillSgg();
   $('urban').onchange = e => { st.urban = e.target.checked; render(); };
@@ -201,7 +201,7 @@ function initMap(geo) {
     map.on('click', 'dong-fill', e => {
       const r = D[e.features[0].id];
       if (!map.queryRenderedFeatures(e.point, { layers: ['stops', 'rail', 'pmpark'].filter(l => map.getLayer(l)) }).length)
-        new maplibregl.Popup({ maxWidth: '300px' }).setLngLat(e.lngLat).setHTML(dongPopup(r)).addTo(map);
+        new maplibregl.Popup({ maxWidth: '340px', className: 'dong-pop' }).setLngLat(e.lngLat).setHTML(dongPopup(r)).addTo(map);
     });
     map.on('mouseenter', 'dong-fill', () => { map.getCanvas().style.cursor = 'pointer'; });
     map.on('mouseleave', 'dong-fill', () => { map.getCanvas().style.cursor = ''; });
@@ -213,7 +213,7 @@ function initMap(geo) {
       'circle-stroke-color': '#ffffff', 'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 10, 0, 14, 1] } });
     map.addSource('rail', { type: 'geojson', data: { type: 'FeatureCollection', features: rail.map(s => ({ type: 'Feature', properties: { n: s[2] }, geometry: { type: 'Point', coordinates: [s[0], s[1]] } })) } });
     map.addLayer({ id: 'rail', type: 'circle', source: 'rail', minzoom: 7, paint: {
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 7, 2.5, 14, 7], 'circle-color': '#6250d6', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1.5 } });
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 7, 1.6, 11, 2.6, 15, 4.5], 'circle-color': '#6250d6', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 7, 0.5, 13, 1] } });
     map.on('click', 'stops', e => {
       const p = e.features[0].properties;
       new maplibregl.Popup({ maxWidth: '240px' }).setLngLat(e.lngLat).setHTML(`<b>버스 정류장</b><br>정차 노선 ${p.r < 0 ? '자료 없음' : p.r + '개'}${p.o ? '<br><small>위치: OpenStreetMap (국토부 파일에 없는 지역)</small>' : ''}`).addTo(map);
@@ -226,6 +226,8 @@ function initMap(geo) {
       $(id).onchange = set; set();
     }
     syncLayers();  // the layers of checkboxes this tab hides stay off
+    Beam.add(map, () => legend(metric()));
+    Young.init(map, D, C, () => legend(metric()));
   });
 }
 
@@ -246,10 +248,10 @@ function feePoints() {
     let x = 0, y = 0, n = 0;
     const walk = c => typeof c[0] === 'number' ? (x += c[0], y += c[1], n++) : c.forEach(walk);
     walk(f.geometry.coordinates);
-    const b = by[r[C.sgg]] ??= { x: 0, y: 0, w: 0, fee: o.fee, planned: o.planned };
+    const b = by[r[C.sgg]] ??= { x: 0, y: 0, w: 0, fee: o.fee, planned: o.planned, grace: o.grace };
     b.x += x / n * r[C.area_km2]; b.y += y / n * r[C.area_km2]; b.w += r[C.area_km2];
   });
-  return Object.entries(by).map(([sgg, b]) => ({ type: 'Feature', properties: { sgg, label: won(b.fee) + (b.planned ? '(예정)' : '') }, geometry: { type: 'Point', coordinates: [b.x / b.w, b.y / b.w] } }));
+  return Object.entries(by).map(([sgg, b]) => ({ type: 'Feature', properties: { sgg, label: won(b.fee) + (b.planned ? '(예정)' : '') + (b.grace ? '\n' + graceShort(b.grace) : '') }, geometry: { type: 'Point', coordinates: [b.x / b.w, b.y / b.w] } }));
 }
 // the metric colours fade while an overlay that colours 시군구 (조례·견인, PM 기기 수) is on, so its colours read cleanly
 // show the tab's controls and sections; 제도·규제 starts with the 견인료 map when no 조례 condition is ticked
@@ -297,7 +299,7 @@ function dongPopup(r) {
   const line = (k, v) => `<tr><td>${k}</td><td style="text-align:right">${v}</td></tr>`;
   return `<b>${esc(r[C.sidonm])} ${esc(r[C.sggnm])} ${esc(r[C.name])}</b> <small>(${r[C.type]})</small><table>` +
     line('주민등록인구', fmt(r[C.pop])) + line('면적 (생활권)', r[C.area_km2].toFixed(2) + '㎢ (' + pct(r[C.hab]) + ')') + line('버스 정류장', fmt(r[C.stops]) + '곳') +
-    METRICS.map(m => line(m.name, mfmt(m, m.v(x)))).join('') + (OPS[r[C.sgg]] != null ? line(`공유 PM / 자전거 (${opsDate()})`, opsText(OPS[r[C.sgg]]) + ' / ' + bikeText(BIKE[r[C.sgg]])) : '') + (FLEET[r[C.sgg]] ? line('PM 기기', fleetText(FLEET[r[C.sgg]], r[C.sgg])) : '') + (() => { const sv = survey(r[C.sgg]); return (bikeLine(sv) ? line(`공유자전거 (${meta2()})`, bikeLine(sv)) : '') + (useLine(sv) ? line(`앱 기반 이용 횟수 (${meta2()})`, useLine(sv)) : ''); })() + (PARKU[r[C.sgg]] ? line(`PM 주차구역 (${esc(PARKU[r[C.sgg]].name)})`, fmt(PARKU[r[C.sgg]].n) + '곳' + (() => { const g = unitGap(PARKU[r[C.sgg]]); return g ? ` · 1㎢당 ${g.d.toFixed(1)}곳` : ''; })()) : '') + (ORD[r[C.sgg]] ? line('PM 조례 · 이동근거', yn(ORD[r[C.sgg]].o) + ' · ' + yn(ORD[r[C.sgg]].m)) + line('PM 견인 · 자전거 견인', towText(ORD[r[C.sgg]]) + ' · ' + yn(ORD[r[C.sgg]].b)) : '') + (r[C.stores] != null ? line('상가업소', fmt(r[C.stores]) + '곳') : '') + (r[C.y2039] != null ? line('20~39세 / 70세 이상', pct(r[C.y2039]) + ' / ' + pct(r[C.o70])) : '') + (U[r[C.sgg]] ? line(`법정 도시지역 면적 (${U[r[C.sgg]].city ? esc(U[r[C.sgg]].city) + ' 전체' : '시군구'})`, pct(U[r[C.sgg]].area)) : '') + (() => { const t = trips(r[C.sgg]); return t.sparse ? line('교통카드 승차 (시군구)', '자료 부족') : t.trip == null ? '' :
+    METRICS.map(m => line(m.name, mfmt(m, m.v(x)))).join('') + (OPS[r[C.sgg]] != null ? line(`공유 PM / 자전거 (${opsDate()})`, opsText(OPS[r[C.sgg]]) + ' / ' + bikeText(BIKE[r[C.sgg]])) : '') + (FLEET[r[C.sgg]] ? line('PM 기기', fleetText(FLEET[r[C.sgg]], r[C.sgg])) : '') + (() => { const sv = survey(r[C.sgg]); return (bikeLine(sv) ? line(`공유자전거 (${meta2()})`, bikeLine(sv)) : '') + (useLine(sv) ? line(`앱 기반 이용 횟수 (${meta2()})`, useLine(sv)) : ''); })() + (PARKU[r[C.sgg]] ? line(`PM 주차구역 (${esc(PARKU[r[C.sgg]].name)})`, fmt(PARKU[r[C.sgg]].n) + '곳' + (() => { const g = unitGap(PARKU[r[C.sgg]]); return g ? ` · 1㎢당 ${g.d.toFixed(1)}곳` : ''; })()) : '') + (ORD[r[C.sgg]] ? line('PM 조례 · 이동근거', yn(ORD[r[C.sgg]].o) + ' · ' + yn(ORD[r[C.sgg]].m)) + line('PM 견인', towText(ORD[r[C.sgg]])) + (ORD[r[C.sgg]].t ? line('유예시간', graceText(ORD[r[C.sgg]])) : '') + line('자전거 견인', bikeTow(ORD[r[C.sgg]])) : '') + (Beam.kind(r[C.sgg]) ? line('빔모빌리티 운영', Beam.kind(r[C.sgg])) : '') + (r[C.stores] != null ? line('상가업소', fmt(r[C.stores]) + '곳') : '') + (r[C.y2039] != null ? line('20~39세 / 70세 이상', pct(r[C.y2039]) + ' / ' + pct(r[C.o70])) + line('20~39세 인구수 · 비중 순위', (() => { const i = D.indexOf(r); return Young.rankText(i, 'n') + ' · ' + Young.rankText(i, 's'); })()) : '') + (U[r[C.sgg]] ? line(`법정 도시지역 면적 (${U[r[C.sgg]].city ? esc(U[r[C.sgg]].city) + ' 전체' : '시군구'})`, pct(U[r[C.sgg]].area)) : '') + (() => { const t = trips(r[C.sgg]); return t.sparse ? line('교통카드 승차 (시군구)', '자료 부족') : t.trip == null ? '' :
       line('주민 1인당 하루 승차 (시군구)', t.trip.toFixed(2)) + line('환승 통행 비중 (시군구)', pct(t.transfer)); })() + '</table>' +
     (r[C.stop_gap] ? '<small>이 시군구는 국토부 파일과 OpenStreetMap 모두 정류장이 크게 부족해 버스 지표를 비워 두었습니다.</small><br>' : '') +
     (r[C.osm_fill] ? '<small>이 시군구는 국토부 정류장 파일에 거의 없어 OpenStreetMap 정류장으로 보완했습니다.</small><br>' : '') +
@@ -392,6 +394,8 @@ function renderInsights() {
     }
     if (Object.keys(ORD).length && st.tab === 'policy') add('policy', `PM 조례에 PM 이동·견인 근거가 있는 시군구 ${sggs.filter(g => ORD[g]?.m).length}곳 / ${sggs.length}곳 (광역 조례 포함)`);
     if (Object.keys(ORD).length) add('policy', `PM 견인 조례가 적용되는 시군구 ${tows.length}곳 / ${sggs.length}곳` + (fees.length ? ` (견인료 ${won(fees[0])}~${won(fees[fees.length - 1])}, 중앙값 ${won(fees[Math.floor(fees.length / 2)])})` : '') + ` · 자전거 견인 ${sggs.filter(g => ORD[g]?.b).length}곳 · 공유자전거 미운영 ${sggs.filter(g => BIKE[g]?.[0] === 0).length}곳`);
+    const gr = {}; for (const g of tows) if (ORD[g].grace) gr[ORD[g].grace] = (gr[ORD[g].grace] || 0) + 1;
+    if (Object.keys(gr).length) add('policy', `PM 견인 유예시간(실제 운영 현황 표가 있는 시군구 ${Object.values(gr).reduce((a, b) => a + b, 0)}곳): ` + Object.entries(gr).sort((a, b) => graceMin(a[0]) - graceMin(b[0])).map(([k, n]) => `${esc(k)} ${n}곳`).join(' · ') + ' <small>(\'즉시 견인\'이어도 일반견인구역은 유예를 두는 곳이 있음, 표 비고 참고)</small>');
     const t3 = top(sg, 'either', 3, r => `${esc(r.name.replace(/^\S+ /, ''))} ${pct(r.either)}`);
     if (t3) add('gap', `버스·철도 어디에도 걸어서 닿기 어려운 땅이 넓은 시군구: <b>${t3}</b>`);
     const t4 = top(sg, 'good', 3, r => `${esc(r.name.replace(/^\S+ /, ''))} ${pct(r.good)}`);
@@ -418,7 +422,7 @@ function renderInsights() {
     if (pg) add('supply', `PM 주차구역 ${fmt(pu.n)}곳${pu.sgg.length > 1 ? `(${esc(pu.name)} 전체)` : ''} = ${basis()} 1㎢당 ${pg.d.toFixed(1)}곳. 1㎢당 20~30곳(주차 준수율이 가장 높다는 연구 기준)에 견주면 ${gapText(pg)}. <small>${esc(pu.date)} 기준</small>`);
     else if (PMS.parking_units?.length) add('supply', '<small>이 시군구는 PM 주차구역 자료가 없습니다(0곳이라는 뜻이 아닙니다).</small>');
     if (U[pickSgg] && st.tab === 'policy') add('policy', `법정 도시지역(국토계획법 용도지역)이 면적의 ${pct(U[pickSgg].area)}, 주민의 ${pct(U[pickSgg].pop)}${U[pickSgg].city ? ` (${esc(U[pickSgg].city)} 전체 값)` : ''}입니다.`);
-    if (o) add('policy', `조례: PM 조례 ${yn(o.o)}, 이동·견인 근거 ${yn(o.m)}, PM 견인 ${towText(o)}, 자전거 견인 ${yn(o.b)}.` + (o.wide.length ? ` <small>(광역 조례 함께 적용: ${o.wide.map(w => esc(w[0])).join(', ')})</small>` : ''));
+    if (o) add('policy', `조례: PM 조례 ${yn(o.o)}, 이동·견인 근거 ${yn(o.m)}, PM 견인 ${towText(o)}${o.t ? `, 유예시간 ${graceText(o)}` : ''}, 자전거 견인 ${bikeTow(o)}.` + (o.practice ? ` <small>(견인 여부·견인료·유예시간: ${esc(o.practice)})</small>` : '') + (o.wide.length ? ` <small>(광역 조례 함께 적용: ${o.wide.map(w => esc(w[0])).join(', ')})</small>` : ''));
     if (BIKE[pickSgg]) add('supply', `공유자전거: ${bikeText(BIKE[pickSgg])} (${opsDate()} 기준).`);
     if (OPS[pickSgg] != null) add('supply', OPS[pickSgg] ? `공유 PM이 운영되는 지자체입니다(${opsDate()} 기준).` : `<b>공유 PM이 운영되지 않는 지자체입니다</b>(${opsDate()} 기준).` + (pmM.v(x) ? ' 위 PM 10분권은 서비스가 들어오면 메울 수 있는 공백입니다.' : ''));
     if (IND[pickSgg]) add('pm', `산업단지 ${IND[pickSgg].n}곳(가동업체 ${fmt(IND[pickSgg].firms)}곳${IND[pickSgg].city ? ', ' + esc(IND[pickSgg].city) + ' 전체' : ''})은 출퇴근 목적지로, 역과 떨어져 있으면 PM 연계 후보입니다.`);
@@ -456,8 +460,9 @@ function legend(m) {
     ($('show-park').checked ? `<div class="row"><i class="pt" style="background:#1f6f5c"></i>PM 주차구역 (좌표 있는 ${fmt(PMS.parking.length)}곳)</div>` : '') +
     (ordOn().length ? `<div class="row" style="margin-top:4px"><b>${ordOn().map(k => ORDN[k]).join(' + ')}</b></div>` + ($('ord-t').checked
       ? FEEB.map(([, t], i) => row(ORDC[i + 1], 'PM 견인료 ' + t)).join('') + (Object.keys(ORD).some(g => ordHit(g) && !ORD[g].fee) ? row(ORDC[0], '견인료 금액 없음') : '')
-      : row(ORDC[0], '해당 시군구')) + `<div class="row"><small>광역 조례가 있으면 소속 시군구 모두 해당. ${Object.keys(ORD).filter(ordHit).length}곳</small></div>` : '') +
+      : row(ORDC[0], '해당 시군구')) + `<div class="row"><small>광역 조례가 있으면 소속 시군구 모두 해당. ${$('ord-t').checked ? '견인 여부·견인료는 실제 견인 운영 현황 표가 있으면 그것을 우선, 지도 숫자 아래는 유예시간. ' : ''}${Object.keys(ORD).filter(ordHit).length}곳</small></div>` : '') +
     ($('show-terrain').checked || $('show-3d').checked ? `<div class="row" style="margin-top:4px"><small>${$('show-terrain').checked ? '지형 음영: 짙을수록 급한 경사. ' : ''}${$('show-3d').checked ? '3D: 높이 1.6배 과장, 나침반을 누르면 정북으로.' : ''}</small></div>` : '') +
+    Beam.legendRows() + Young.legendRows() +
     (st.tab === 'policy' ? '' : `<div class="row"><small>정류장은 확대(줌 10 이상)하면 보입니다.</small></div>`);
 }
 
@@ -508,6 +513,12 @@ function useLine(sv) {
   return [sv.pu && `PM ${fmt(sv.pu.pm_use)}회${per(sv.pu, 'pm_use')}`, sv.bu && `자전거(민영) ${fmt(sv.bu.bike_use)}회${per(sv.bu, 'bike_use')}`].filter(Boolean).join(' · ') +
     ((sv.pu || sv.bu).sgg.length > 1 ? ` <small>· ${esc((sv.pu || sv.bu).name)} 전체</small>` : '');
 }
+// 유예시간: how long a PM may stand where it should not before it is towed (실제 견인 운영 현황 표; 조례에는 없음)
+const graceMin = g => !g ? null : /즉시/.test(g) ? 0 : /(\d+)\s*분/.test(g) ? +g.match(/(\d+)\s*분/)[1] : /(\d+)\s*시간/.test(g) ? 60 * g.match(/(\d+)\s*시간/)[1] : null;
+const graceShort = g => /즉시/.test(g) ? '즉시' : '유예 ' + g;
+const graceText = o => !o?.t ? '-' : (o.grace ? esc(o.grace) : '자료 없음') + (o.note ? ` <small>(${esc(o.note)})</small>` : '');
+// 자전거 견인료는 보통 PM 견인료와 같아 같은 금액으로 표시
+const bikeTow = o => !o ? '-' : !o.b ? '없음' : o.t && o.fee ? won(o.fee) + ' <small>(PM과 같은 금액으로 봄)</small>' : '있음';
 const towText = o => !o ? '-' : !o.t ? '없음' : (o.fee ? won(o.fee) + (o.planned ? '(예정)' : '') : '견인') + (o.src && o.wide.some(w => w[0] === o.src) ? ` <small title="${esc(o.src)} 조례 기준">광역</small>` : '');
 
 function sgRows(rows, m) {
@@ -528,7 +539,7 @@ function sgRows(rows, m) {
       pmuse: (u => u && u.pop ? u.pm_use / u.pop * 1e4 : null)(survey(rs[0][C.sgg])?.pu),
       parkU: PARKU[rs[0][C.sgg]] || null, park: PARKU[rs[0][C.sgg]]?.n ?? null,
       ...(() => { const g = unitGap(PARKU[rs[0][C.sgg]]); return { parkd: g?.d ?? null, park20: g?.gaps[0].short ?? null, park30: g?.gaps[1].short ?? null }; })(),
-      pmord: ORD[rs[0][C.sgg]]?.o ?? null, tow: ORD[rs[0][C.sgg]]?.t ? (ORD[rs[0][C.sgg]].fee ?? 0) : null, btow: ORD[rs[0][C.sgg]]?.b ?? null, move: ORD[rs[0][C.sgg]]?.m ?? null, uarea: U[rs[0][C.sgg]]?.area ?? null, upop: U[rs[0][C.sgg]]?.pop ?? null, ucity: U[rs[0][C.sgg]]?.city ?? null };
+      pmord: ORD[rs[0][C.sgg]]?.o ?? null, tow: ORD[rs[0][C.sgg]]?.t ? (ORD[rs[0][C.sgg]].fee ?? 0) : null, btow: ORD[rs[0][C.sgg]]?.b ?? null, grace: ORD[rs[0][C.sgg]]?.t ? graceMin(ORD[rs[0][C.sgg]].grace) : null, move: ORD[rs[0][C.sgg]]?.m ?? null, uarea: U[rs[0][C.sgg]]?.area ?? null, upop: U[rs[0][C.sgg]]?.pop ?? null, ucity: U[rs[0][C.sgg]]?.city ?? null };
   });
 }
 
@@ -572,7 +583,7 @@ function renderSgg(rows, m) {
     { k: 'pmuse', h: 'PM 앱 이용 (1만 명당)', f: v => v == null ? '-' : v.toFixed(1) }, { k: 'park', h: 'PM 주차구역', f: (v, r) => v == null ? '-' : fmt(v) + (r.parkU.sgg.length > 1 ? ` <small title="${esc(r.parkU.name)} 전체 값">시</small>` : '') },
     { k: 'parkd', h: `주차구역 (${st.hab ? '생활권 ' : ''}1㎢당)`, f: v => v == null ? '-' : v.toFixed(1) },
     { k: 'park20', h: '20곳/㎢ 기준 부족', f: v => v == null ? '-' : v > 0 ? pct(v) : '충족' }, { k: 'park30', h: '30곳/㎢ 기준 부족', f: v => v == null ? '-' : v > 0 ? pct(v) : '충족' },
-    { k: 'pmord', h: 'PM 조례', f: yn }, { k: 'move', h: 'PM 조례 이동·견인 근거', f: yn }, { k: 'tow', h: 'PM 견인료', f: (v, r) => towText(r.ord) }, { k: 'btow', h: '자전거 견인', f: yn },
+    { k: 'pmord', h: 'PM 조례', f: yn }, { k: 'move', h: 'PM 조례 이동·견인 근거', f: yn }, { k: 'tow', h: 'PM 견인료', f: (v, r) => towText(r.ord) }, { k: 'grace', h: 'PM 견인 유예시간', l: 1, f: (v, r) => r.ord?.t ? graceText(r.ord) : '-' }, { k: 'btow', h: '자전거 견인', f: (v, r) => bikeTow(r.ord) },
     { k: 'stores', h: '상가업소', f: fmt }, { k: 'firms', h: '산업단지 가동업체', f: (v, r) => fmt(v) + (r.icity && v != null ? ` <small title="${esc(r.icity)} 전체 값">시</small>` : '') },
     { k: 'lh', h: 'LH 임대 세대', f: fmt }, { k: 'y2039', h: '20~39세 비중', f: pct }, { k: 'o70', h: '70세 이상 비중', f: pct },
     { k: 'uarea', h: '법정 도시지역 면적', f: (v, r) => pct(v) + (r.ucity && v != null ? ` <small title="${esc(r.ucity)} 전체 값">시</small>` : '') },
@@ -582,8 +593,8 @@ function renderSgg(rows, m) {
   const T = TABS[st.tab];
   sggShown = table($('sgg-table'), T.cols ? cols.filter(c => c.k === 'name' || T.cols.includes(c.k)) : cols, sgRows(rows, m), sortSgg, k => { sortSgg = { k, asc: sortSgg.k === k ? !sortSgg.asc : k === 'name' }; render(); },
     r => { pickSggRow(r.sgg); $('dong-title').scrollIntoView({ behavior: 'smooth' }); });
-  $('sgg-csv').onclick = () => csv(`시군구_${st.metric}.csv`, ['시군구코드', '시군구', m.name, '인구', '면적_km2', '정류장', '버스철도도보권밖', '노선넉넉한정류장도보권밖', 'PM10분새로닿는면적비율', 'PM잠재지수', '공유PM운영', '공유자전거운영', '공유자전거유형', 'PM조례', 'PM조례이동견인근거', 'PM견인', 'PM견인료', '견인료기준지자체', '자전거견인', 'PM기기수', 'PM기기단위', 'PM기기기준일', 'PM기기1천명당', '공유자전거대수_2024', 'PM앱이용횟수_1만명당_2024', 'PM주차구역', st.hab ? '주차구역_생활권1km2당' : '주차구역_1km2당', '주차구역20곳기준부족률', '주차구역30곳기준부족률', '상가업소', '산업단지가동업체', 'LH임대세대', '20~39세비중', '70세이상비중', '법정도시지역면적비율', '도시지역거주인구비율', '주민1인당하루승차', '환승통행비중', '경로승차비중', '노선수자료', 'OSM보완', '교통카드자료부족'],
-    sggShown.map(r => [r.sgg, r.name, r.v, r.pop, r.area.toFixed(3), r.stops, r.either, r.good, r.pm, r.pmidx == null ? null : (r.pmidx * 100).toFixed(1), r.pmops, r.bike, r.bikeKind, r.ord?.o, r.ord?.m, r.ord?.t, r.ord?.fee, r.ord?.src, r.ord?.b, r.fleet, r.fleetU?.name, r.fleetU?.date, r.fleetpc, r.bikes, r.pmuse, r.park, r.parkd, r.park20, r.park30, r.stores, r.firms, r.lh, r.y2039, r.o70, r.uarea, r.upop, r.trip, r.transfer, r.elder, r.route, r.osm, +r.sparse]));
+  $('sgg-csv').onclick = () => csv(`시군구_${st.metric}.csv`, ['시군구코드', '시군구', m.name, '인구', '면적_km2', '정류장', '버스철도도보권밖', '노선넉넉한정류장도보권밖', 'PM10분새로닿는면적비율', 'PM잠재지수', '공유PM운영', '공유자전거운영', '공유자전거유형', 'PM조례', 'PM조례이동견인근거', 'PM견인', 'PM견인료', '견인료기준지자체', 'PM견인유예시간', '견인운영비고', '자전거견인', 'PM기기수', 'PM기기단위', 'PM기기기준일', 'PM기기1천명당', '공유자전거대수_2024', 'PM앱이용횟수_1만명당_2024', 'PM주차구역', st.hab ? '주차구역_생활권1km2당' : '주차구역_1km2당', '주차구역20곳기준부족률', '주차구역30곳기준부족률', '상가업소', '산업단지가동업체', 'LH임대세대', '20~39세비중', '70세이상비중', '법정도시지역면적비율', '도시지역거주인구비율', '주민1인당하루승차', '환승통행비중', '경로승차비중', '노선수자료', 'OSM보완', '교통카드자료부족'],
+    sggShown.map(r => [r.sgg, r.name, r.v, r.pop, r.area.toFixed(3), r.stops, r.either, r.good, r.pm, r.pmidx == null ? null : (r.pmidx * 100).toFixed(1), r.pmops, r.bike, r.bikeKind, r.ord?.o, r.ord?.m, r.ord?.t, r.ord?.fee, r.ord?.src, r.ord?.t ? r.ord?.grace : null, r.ord?.note, r.ord?.b, r.fleet, r.fleetU?.name, r.fleetU?.date, r.fleetpc, r.bikes, r.pmuse, r.park, r.parkd, r.park20, r.park30, r.stores, r.firms, r.lh, r.y2039, r.o70, r.uarea, r.upop, r.trip, r.transfer, r.elder, r.route, r.osm, +r.sparse]));
 }
 
 function renderDongs(rows, m) {
