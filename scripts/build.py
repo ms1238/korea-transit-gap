@@ -33,6 +33,7 @@ Outputs (site/data): dongs.geojson (simplified boundaries), stats.json (one row 
 stations.json, pmgrid.png, download/dongs.csv.
 """
 import calendar
+import collections
 import csv
 import glob
 import json
@@ -370,9 +371,10 @@ def load_upis(dongs):
     return out, rows[0]["기준연도"] if rows else None
 
 
-def load_pm_ops(dongs):
-    """공유 PM 운영 (1/0) per current 시군구 code from scripts/static/pm_ops.csv, and its 기준일; by code, else by name."""
-    path = os.path.join(os.path.dirname(__file__), "static", "pm_ops.csv")
+def load_ops(dongs, name):
+    """운영 (1/0) and 유형 per current 시군구 code from scripts/static/<name> (pm_ops.csv, bike_ops.csv), and its 기준일;
+    by code, else by name."""
+    path = os.path.join(os.path.dirname(__file__), "static", name)
     if not os.path.exists(path):
         return {}, None
     with open(path, encoding="utf-8") as f:
@@ -383,8 +385,64 @@ def load_pm_ops(dongs):
     for d in dongs:
         r = by_code.get(d["sgg"]) or by_name.get((d["sidonm"], d["sggnm"]))
         if r:
-            out[d["sgg"]] = int(r["공유PM운영"])
+            out[d["sgg"]] = [int(r["운영"]), r.get("유형") or ""]
     return out, rows[0]["기준"] if rows else None
+
+
+def fee_won(text):
+    """'30,000원', '15000원', 40000, '30,000원 (예정)' → (30000, planned)."""
+    m = re.search(r"\d[\d,]*", str(text or ""))
+    return (int(m.group().replace(",", "")) if m else None), "예정" in str(text or "")
+
+
+def load_ordinance(dongs):
+    """PM 조례·견인 per current 시군구 from scripts/static/ordinance.csv (지자체 PM·견인 조례 분석, see ordinance_csv.py).
+    The 광역 level comes first: what the 광역지자체 has (PM 조례, 이동조치 규정, PM 견인, 자전거 견인) holds for every
+    기초 in it, whatever the 기초 row says. The 견인료 is the 기초's own when it set one, else the 광역's.
+    The 2026 전남광주통합특별시 has three 광역 rows: (구)광주광역시 for the former 광주 구, (구)전라남도 for the former 전남
+    시군, and 전남광주통합특별시 for all of them. 세종 and 제주's 행정시 have only the 광역 row.
+    Returns {sgg: {o, m, t, b: 0/1, fee, planned, src, own: [조례명…], wide: [(광역, 조례명…)]}}."""
+    path = os.path.join(os.path.dirname(__file__), "static", "ordinance.csv")
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    yes = lambda v: (v or "").strip().upper() == "Y"
+    wide, local = {}, {}
+    for r in rows:
+        (wide if r["구분"] == "광역" else local)[r["지자체명"].strip()] = r
+
+    def wides(d):
+        if d["sido"] == "12":
+            old = "(구)광주광역시" if d["sggnm"].endswith("구") else "(구)전라남도"
+            return [wide[k] for k in (old, d["sidonm"]) if k in wide]
+        return [wide[d["sidonm"]]] if d["sidonm"] in wide else []
+
+    def own(d):
+        r = local.get(f"{d['sidonm']} {d['sggnm']}")
+        if r is None and "시" in d["sggnm"][:-1] and d["sggnm"].endswith("구"):  # 시 with 구: the 시 row
+            r = local.get(f"{d['sidonm']} {d['sggnm'][:d['sggnm'].index('시') + 1]}")
+        return r
+
+    out = {}
+    for d in dongs:
+        if d["sgg"] in out:
+            continue
+        r, ws = own(d), wides(d)
+        both = ([r] if r else []) + ws
+        flag = lambda k: int(any(yes(x[k]) for x in both))
+        fee, planned, src = None, False, None
+        for x in ([r] if r else []) + ws:  # the 기초's own fee first
+            if yes(x["견인조례_PM항목"]):
+                f_, p_ = fee_won(x["PM_견인료"])
+                if f_:
+                    fee, planned, src = f_, p_, x["지자체명"]
+                    break
+        out[d["sgg"]] = {"o": flag("PM조례_유무"), "m": flag("이동조치규정_유무"), "t": flag("견인조례_PM항목"),
+                         "b": flag("자전거 견인 여부"), "fee": fee, "planned": planned, "src": src,
+                         "own": [n for n in ((r or {}).get("PM조례명"), (r or {}).get("견인조례명")) if n],
+                         "wide": [[x["지자체명"], *[n for n in (x.get("PM조례명"), x.get("견인조례명")) if n]] for x in ws]}
+    return out
 
 
 def main():
@@ -646,9 +704,15 @@ def main():
     print(f"trips sparse (< {TRIPS_MIN} a resident a day): " + ", ".join(sorted(name_of(g) for g, v in sgg_trips.items() if v["sparse"]))
           + "; none: " + (", ".join(sorted(name_of(g) for g in set(sgg_of) if g not in sgg_trips)) or "-"), flush=True)
     upis, upis_year = load_upis(dongs)
-    pm_ops, pm_ops_date = load_pm_ops(dongs)
-    print(f"공유 PM 운영 ({pm_ops_date or '-'}): {sum(pm_ops.values())} of {len(pm_ops)} 시군구 operate; "
-          f"no figure: {', '.join(sorted({d['sggnm'] for d in dongs if d['sgg'] not in pm_ops})) or '-'}", flush=True)
+    pm_ops, pm_ops_date = load_ops(dongs, "pm_ops.csv")
+    bike_ops, _ = load_ops(dongs, "bike_ops.csv")
+    for what, ops in (("공유 PM", pm_ops), ("공유자전거", bike_ops)):
+        print(f"{what} 운영 ({pm_ops_date or '-'}): {sum(v[0] for v in ops.values())} of {len(ops)} 시군구 operate; "
+              f"no figure: {', '.join(sorted({d['sggnm'] for d in dongs if d['sgg'] not in ops})) or '-'}", flush=True)
+    ordin = load_ordinance(dongs)
+    print(f"조례 ({len(ordin)} 시군구): " + ", ".join(f"{k} {sum(v[k] for v in ordin.values())}" for k in "omtb")
+          + f"; 견인료 {sum(v['fee'] is not None for v in ordin.values())} (" + ", ".join(
+              f"{fee:,}원 {n}" for fee, n in sorted(collections.Counter(v['fee'] for v in ordin.values() if v['t'] and v['fee']).items())) + ")", flush=True)
     nogo = sorted({d["sidonm"] + " " + d["sggnm"] for d in dongs if d["sgg"] not in upis})
     print(f"도시지역 ({upis_year}): {len(upis)} of {len(set(sgg_of))} 시군구; without: {', '.join(nogo) or '-'}", flush=True)
     meta = {"boundary": adm["ver"], "trips_months": tmonths, "upis_year": upis_year, "pop_ym": pop_raw["ym"], "stops_collected": sm["collected"], "route_days": rdays,
@@ -660,7 +724,8 @@ def main():
 "steep_sens": steep_sens, "landcover": hab_grid is not None,
             "grid_bounds": [[LON0, inv_merc_y(merc_y(LAT1))], [LON0 + np.degrees(W * PIX_M / R_EARTH), inv_merc_y(merc_y(LAT1) - H * PIX_M)]]}
     with open(os.path.join(OUT, "stats.json"), "w", encoding="utf-8") as f:
-        json.dump({"meta": meta, "cols": cols, "rows": rows, "sgg_trips": sgg_trips, "sgg_urban": upis, "sgg_industrial": ind, "sgg_lh": lh, "sgg_age": age, "sgg_pm_ops": pm_ops},
+        json.dump({"meta": meta, "cols": cols, "rows": rows, "sgg_trips": sgg_trips, "sgg_urban": upis, "sgg_industrial": ind, "sgg_lh": lh, "sgg_age": age, "sgg_pm_ops": {g: v[0] for g, v in pm_ops.items()},
+                   "sgg_bike_ops": bike_ops, "sgg_ordinance": ordin},
                   f, ensure_ascii=False, separators=(",", ":"))
     feats = []
     for i, g in enumerate(geoms):
