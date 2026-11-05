@@ -461,6 +461,26 @@ def load_ordinance(dongs):
                 o.update(t=t, fee=int(r["견인료"]) if t and r["견인료"] else None, planned=False, src=r["지역"] if t else None,
                          grace=r["유예시간"] or None, note=r["비고"] or None, practice=r["출처"])
         print(f"towing practice: {len(prs)} regions, {sum(len(c) for _, c in prs)} 시군구", flush=True)
+    for o in out.values():  # p 지정주차제, n 킥보드 없는 거리 (운영 정책, 조례 분석표 밖): 0 unless listed below
+        o.setdefault("p", 0); o.setdefault("n", 0); o["lv"].setdefault("p", 0); o["lv"].setdefault("n", 0)
+    zones = os.path.join(os.path.dirname(__file__), "static", "pm_zone_policy.csv")
+    if os.path.exists(zones):  # a 광역 (대전광역시) holds for its every 구 as 'lv 1'; a 시군구 named itself is 'lv 2'
+        resolve = region_resolver(dongs)
+        key = {"지정주차제": "p", "킥보드 없는 거리": "n"}
+        n = defaultdict(int)
+        with open(zones, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                k, codes = key[r["정책"].strip()], resolve(r["지역"])
+                if not codes:
+                    print(f"  PM zone policy: {r['지역']} not mapped", flush=True)
+                lv = 1 if re.search(r"(특별시|광역시|도)$", r["지역"].strip()) else 2
+                for g in codes:
+                    if g in out:
+                        out[g][k] = 1
+                        out[g]["lv"][k] = max(out[g]["lv"][k], lv)
+                        out[g].setdefault("zsrc", r["출처"])
+                n[k] += 1
+        print(f"PM zone policy: 지정주차제 {sum(o['p'] for o in out.values())} 시군구, 킥보드 없는 거리 {sum(o['n'] for o in out.values())} 시군구", flush=True)
     return out
 
 
