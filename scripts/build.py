@@ -720,6 +720,25 @@ def write_accidents(dongs, pop):
           + (", ".join(f"{k} {v}" for k, v in lost.items()) or "-"), flush=True)
 
 
+def write_bounds(dongs, geoms):
+    """site/data/bounds.geojson: outlines of each 시도, 시군구 and 일반구를 둔 시 (their 행정동 merged), so the map can draw
+    the picked area's border without the 행정동 lines inside it. key: 시도 code, 시군구 code, or 'c' + 시 code."""
+    groups = defaultdict(list)
+    for d, g in zip(dongs, geoms):
+        groups[("sido", d["sido"])].append(g)
+        groups[("sgg", d["sgg"])].append(g)
+        m = re.match(r"^(.+시)(.+구)$", d["sggnm"])
+        if m:
+            groups[("sgg", "c" + d["sgg"][:4] + "0")].append(g)
+    feats = []
+    for (lv, key), gs in groups.items():
+        geom = shapely.union_all(gs).simplify(0.0015 if lv == "sido" else 0.0006)
+        feats.append({"type": "Feature", "properties": {"lv": lv, "key": key},
+                      "geometry": json.loads(shapely.to_geojson(shapely.set_precision(shapely.boundary(geom), 1e-4)))})
+    with open(os.path.join(OUT, "bounds.geojson"), "w", encoding="utf-8") as f:
+        json.dump({"type": "FeatureCollection", "features": feats}, f, separators=(",", ":"))
+
+
 def write_beam(dongs, geoms):
     """site/data/beam.geojson: 빔모빌리티 운영지역 (scripts/static/beam_areas.csv, 직영 / 프랜차이즈) as one outline per
     시군구 (its 행정동 merged), so the map can draw the areas without the 행정동 lines inside them."""
@@ -1051,8 +1070,9 @@ def main():
         w.writerows(rows)
     write_accidents(dongs, pop)
     write_beam(dongs, geoms)
+    write_bounds(dongs, geoms)
     write_pm_supply(dongs, pop, tree)
-    for name in ("stats.json", "dongs.geojson", "stops.json", "stations.json", "pmgrid.png", "beam.geojson"):
+    for name in ("stats.json", "dongs.geojson", "stops.json", "stations.json", "pmgrid.png", "beam.geojson", "bounds.geojson"):
         print(f"  {name}: {os.path.getsize(os.path.join(OUT, name)) / 1e6:.1f} MB", flush=True)
 
 

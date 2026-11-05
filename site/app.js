@@ -132,6 +132,7 @@ async function main() {
   $('sgg').onchange = e => pickSggRow(e.target.value || null);
   $('dong').onchange = e => {
     const i = +e.target.value;
+    paintSel();
     if (e.target.value === '' || !map) return;
     zoomTo([D[i]]);
     const c = GEO.features[i].geometry, ring = c.type === 'Polygon' ? c.coordinates[0] : c.coordinates[0][0];
@@ -282,6 +283,7 @@ function initMap(geo) {
     }
     syncLayers();  // the layers of checkboxes this tab hides stay off
     Beam.add(map, () => legend(metric()));
+    paintSel();
     Young.init(map, D, C, () => legend(metric()));
   });
 }
@@ -400,6 +402,7 @@ function pickSggRow(key) {
   fillDong();
   renderDongs(D.filter(visible), metric());
   renderInsights();
+  paintSel();
   zoomTo(D.filter(d => key ? pickSet.has(d[C.sgg]) : !st.sido || d[C.sido] === st.sido));
 }
 
@@ -415,6 +418,24 @@ function zoomTo(rows) {
   if (b) map.fitBounds([[b[0], b[1]], [b[2], b[3]]], { padding: 30, duration: 600 });
 }
 
+// the picked area's border in a heavy line: its 시도 / 시군구 (merged outlines, data/bounds.geojson, loaded on the first pick)
+// and, when a 행정동 is picked, that 행정동's own outline on top
+function paintSel() {
+  if (!map || !map.getSource('dongs')) return;
+  const key = pickKey || st.sido || '', dong = $('dong').value;
+  if (key && !map.getSource('bounds')) {
+    map.addSource('bounds', { type: 'geojson', data: dv('data/bounds.geojson') });
+    const w = (a, b) => ['interpolate', ['linear'], ['zoom'], 6, a, 12, b];
+    map.addLayer({ id: 'sel-halo', type: 'line', source: 'bounds', layout: { 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': w(4, 7), 'line-opacity': 0.85 } });
+    map.addLayer({ id: 'sel-line', type: 'line', source: 'bounds', layout: { 'line-join': 'round' }, paint: { 'line-color': '#1b1a17', 'line-width': w(1.8, 3.5) } });
+    map.addLayer({ id: 'sel-dong-halo', type: 'line', source: 'dongs', layout: { 'line-join': 'round' }, paint: { 'line-color': '#ffffff', 'line-width': w(5, 8) } });
+    map.addLayer({ id: 'sel-dong', type: 'line', source: 'dongs', layout: { 'line-join': 'round' }, paint: { 'line-color': '#d6336c', 'line-width': w(2.5, 4) } });
+  }
+  if (!map.getLayer('sel-line')) return;
+  const f = ['==', ['get', 'key'], key], fd = ['==', ['id'], dong === '' ? -1 : +dong];
+  map.setFilter('sel-halo', f); map.setFilter('sel-line', f); map.setFilter('sel-dong-halo', fd); map.setFilter('sel-dong', fd);
+}
+
 function render() {
   const m = metric();
   $('metric-note').textContent = m.note(meta) + (m.idx || m.id === 'few' ? '' : ` [${basis()} 기준]`);
@@ -428,6 +449,7 @@ function render() {
   renderSgg(rows, m);
   renderDongs(rows, m);
   renderInsights();
+  paintSel();
 }
 
 // plain-language findings for the current selection, in short groups: 대중교통 공백 / PM으로 메울 곳 / 공급 / 제도.
