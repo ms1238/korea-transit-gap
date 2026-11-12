@@ -241,7 +241,7 @@ function initMap(geo) {
       'circle-stroke-color': '#ffffff', 'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 8, 0, 12, 1] } });
     map.on('click', 'pmpark', e => {
       const p = PMS.parking[e.features[0].properties.i], s = PMS.parking_sources[p[5]];
-      new maplibregl.Popup({ maxWidth: '260px' }).setLngLat(e.lngLat).setHTML(`<b>PM 주차구역</b><br>${esc(p[2])}${p[3] ? ' · ' + esc(p[3]) : ''}${p[4] ? '<br>주차 ' + esc(p[4]) + (/대/.test(p[4]) ? '' : '대') : ''}<br><small>${esc(s[0])} (${esc(s[1])})</small>`).addTo(map);
+      new maplibregl.Popup({ maxWidth: '260px' }).setLngLat(e.lngLat).setHTML(`<b>PM 주차구역</b><br>${esc(p[2])}${p[3] ? ' · ' + esc(p[3]) : ''}${p[4] ? '<br>주차 ' + esc(p[4]) + (/대/.test(p[4]) ? '' : '대') : ''}<br><small>${esc(s[0])} (${esc(s[1])})</small><br><a href="https://www.google.com/maps/search/?api=1&query=${e.features[0].geometry.coordinates.slice().reverse().map(v => v.toFixed(6)).join(',')}" target="_blank" rel="noopener">구글맵에서 보기</a>`).addTo(map);
     });
     for (const [id, layer] of [['show-fleet', 'fleet'], ['show-park', 'pmpark']]) {
       $(id).disabled = layer === 'fleet' ? !PMS.fleet.length : !PMS.parking.length;
