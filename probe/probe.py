@@ -13,9 +13,8 @@ for u in URLS:
     try:
         r = page(u, 1)
         print("URL", u, "HTTP", r.status_code, "ct", r.headers.get("content-type"))
-        print(red(r.text[:600]))
         j = r.json()
-        body = j["response"]["body"]; hdr = j["response"]["header"]
+        j = j.get("response", j); body = j["body"]; hdr = j["header"]
         print("header", hdr, "totalCount", body.get("totalCount"))
         it = body["items"]; it = it.get("item", it) if isinstance(it, dict) else it
         items += it; url = u; total = int(body["totalCount"]); break
@@ -24,9 +23,9 @@ for u in URLS:
 if not url:
     sys.exit(0)
 n = 2
-while len(items) < total and n < 60:
+while len(items) < total and n < 80:
     try:
-        it = page(url, n).json()["response"]["body"]["items"]
+        jj = page(url, n).json(); it = jj.get("response", jj)["body"]["items"]
         it = it.get("item", it) if isinstance(it, dict) else it
         if not it: break
         items += it
@@ -59,7 +58,30 @@ for x in dedi:
     for k in items[0]:
         if "명" in k and "기관" not in k and "시도" not in k and "시군구" not in k:
             names[str(x.get(k))[:40]] += 1
-print("TOP NAMES", names.most_common(60))
+print("TOP NAMES", names.most_common(80))
+L = lambda x: num(x.get("totalLength"))
+def cls(x):
+    n = str(x.get("rteNm", "")) + " " + str(x.get("majorStopover", ""))
+    if re.search(r"국토종주|종주", n): return "국토종주"
+    if re.search(r"한강|낙동강|금강|영산강|섬진강|북한강|남한강", n): return "4대강·주요하천"
+    if re.search(r"(천|강|하천|둔치|수변|강변|천변)", n): return "기타 하천·수변(이름)"
+    return "기타"
+agg = collections.defaultdict(lambda: [0, 0.0])
+for x in dedi: c = cls(x); agg[c][0] += 1; agg[c][1] += L(x)
+tot = sum(v[1] for v in agg.values())
+for c, (k, l) in sorted(agg.items(), key=lambda v: -v[1][1]): print("DEDI CLASS", c, k, round(l, 1), f"{l / tot:.1%}" if tot else "")
+agg2 = collections.defaultdict(lambda: [0, 0.0])
+for x in items: c = cls(x); agg2[(x.get("bikeRoadType"), c)][0] += 1; agg2[(x.get("bikeRoadType"), c)][1] += L(x)
+for k, v in sorted(agg2.items(), key=lambda v: -v[1][1])[:30]: print("ALL CLASS", k, v[0], round(v[1], 1))
+import statistics
+print("length stats dedi", statistics.quantiles([L(x) for x in dedi], n=10) if len(dedi) > 10 else "")
+crt = collections.Counter(str(x.get("crtrYmd"))[:4] for x in items); print("crtrYmd years", crt.most_common(10))
+sido = collections.defaultdict(float)
+for x in dedi: sido[x.get("ctpvNm")] += L(x)
+print("DEDI by sido", {k: round(v, 1) for k, v in sorted(sido.items(), key=lambda v: -v[1])})
+ex = [x for x in dedi if cls(x) == "기타"]
+ex.sort(key=lambda x: -L(x))
+for x in ex[:40]: print("DEDI 기타 TOP", x.get("ctpvNm"), x.get("sggNm"), x.get("rteNm"), x.get("majorStopover"), x.get("totalLength"), x.get("roadStPointRoadNmAddr"), "->", x.get("roadEdPointRoadNmAddr"))
 coords = [k for k in items[0] if "위도" in k or "경도" in k or "lat" in k.lower() or "lo" == k.lower()[-2:]]
 print("coord keys", coords, "filled", sum(1 for x in items if all(str(x.get(k) or "").strip() for k in coords)))
 # Overpass reachable? 국토종주 routes
