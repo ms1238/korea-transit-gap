@@ -74,11 +74,11 @@ AGE = "https://apis.data.go.kr/1741000/stdgSexdAgePpltn/selectStdgSexdAgePpltn" 
 AGE_DONG = "https://apis.data.go.kr/1741000/admmSexdAgePpltn/selectAdmmSexdAgePpltn"  # 행정동 기준 성·연령별 주민등록 인구
 LH_SPEC = "https://infuser.odcloud.kr/oas/docs?namespace=15080989/v1"  # 한국토지주택공사 전국 LH아파트 단지정보
 PM_ACCIDENTS = "15150556"  # 한국도로교통공단_개인형이동장치PM 교통사고 합성데이터 (odcloud namespace)
-SOURCES = ["admin_dong", "dong_pop", "age", "age_dong", "stops_molit", "stops_osm", "stations_osm", "lh", "pm_accidents", "pm_fleet", "pm_parking", "terrain", "landcover",
+SOURCES = ["admin_dong", "dong_pop", "age", "age_dong", "stops_molit", "stops_osm", "stations_osm", "lh", "pm_accidents", "pm_fleet", "pm_parking", "bike_road", "terrain", "landcover",
            "routes", "stores", "trips"]
-OPTIONAL = {"age", "age_dong", "lh", "routes", "stores", "trips", "terrain", "landcover", "pm_accidents", "pm_fleet", "pm_parking"}  # the page is built without them (their figures stay empty)
+OPTIONAL = {"age", "age_dong", "lh", "routes", "stores", "trips", "terrain", "landcover", "pm_accidents", "pm_fleet", "pm_parking", "bike_road"}  # the page is built without them (their figures stay empty)
 FRESH_DAYS = {"admin_dong": 7, "dong_pop": 7, "stops_molit": 30, "stops_osm": 7, "stations_osm": 7, "lh": 30, "age": 7, "age_dong": 7,
-              "terrain": 365, "landcover": 365, "pm_accidents": 7, "pm_fleet": 7, "pm_parking": 7}  # refetch after this many days
+              "terrain": 365, "landcover": 365, "pm_accidents": 7, "pm_fleet": 7, "pm_parking": 7, "bike_road": 30}  # refetch after this many days
 FILES = {"routes": "routes", "trips": "trips", "stores": "stores", "terrain": "terrain.npz", "landcover": "landcover.npz"}  # else <name>.json
 BBOX = (124.5, 33.0, 132.0, 38.7)  # lon0, lat0, lon1, lat1, as in build.py
 TERRAIN = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
@@ -538,6 +538,33 @@ def odcloud_latest(key, namespace):
             break
         page += 1
     return rows, spec["paths"][path]["get"].get("summary", "")
+
+
+BIKE_ROAD = "https://api.data.go.kr/openapi/tn_pubr_public_bike_road_api"  # 전국자전거도로표준데이터 (행정안전부 표준데이터)
+BIKE_ROAD_KEEP = ["rteNm", "ctpvNm", "sggNm", "roadStPointRoadNmAddr", "roadEdPointRoadNmAddr", "roadStPointLat", "roadStPointLon",
+                  "roadEdPointLat", "roadEdPointLon", "majorStopover", "totalLength", "bikeRoadWidth", "bikeRoadType", "mngInstNm", "crtrYmd"]
+
+
+def fetch_bike_road(key):
+    """자전거도로 구간: 노선명, 시도·시군구, 기점·종점 (주소, 위경도), 주요 경유지, 총길이(km), 너비, 자전거도로 종류
+    (자전거전용도로 / 자전거보행자겸용도로 / 자전거전용차로 / 자전거우선도로), 관리기관, 기준일. Only the start and end
+    points are given, not the line itself."""
+    rows, n, total = [], 1, None
+    while total is None or len(rows) < total:
+        d = requests.get(BIKE_ROAD, params={"serviceKey": key, "pageNo": n, "numOfRows": 1000, "type": "json"}, timeout=(15, 180)).json()
+        d = d.get("response", d)
+        if str(d["header"].get("resultCode")) not in ("00", "0"):
+            raise RuntimeError(d["header"].get("resultMsg"))
+        total = int(d["body"].get("totalCount") or 0)
+        it = d["body"].get("items") or []
+        it = it.get("item", []) if isinstance(it, dict) else it
+        it = [it] if isinstance(it, dict) else it
+        if not it:
+            break
+        rows += it
+        n += 1
+    print(f"bike_road: {len(rows)} of {total} sections", flush=True)
+    save_json("bike_road.json", {"rows": [{k: r.get(k) for k in BIKE_ROAD_KEEP} for r in rows]})
 
 
 def fetch_pm_accidents(key):

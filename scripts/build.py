@@ -684,7 +684,7 @@ def write_pm_supply(dongs, pop, tree):
 # parking zones are counted per 지역 named by their source (경기도 lists only the 시군 that reported); 서울's file covers the
 # whole city, so a 구 it does not name has none
 PARKING_WHOLE = ["서울특별시"]
-ACC_OLD = {("28", "중구"): ("제물포구", "영종구"), ("28", "서구"): ("서해구", "검단구")}  # 인천 구 before the 2026 reorganization
+ACC_OLD = {("28", "중구"): ("제물포구", "영종구"), ("28", "서구"): ("서해구", "검단구"), ("28", "동구"): ("제물포구",)}  # 인천 구 before the 2026 reorganization
 
 
 def write_accidents(dongs, pop):
@@ -737,6 +737,133 @@ def write_bounds(dongs, geoms):
                       "geometry": json.loads(shapely.to_geojson(shapely.set_precision(shapely.boundary(geom), 1e-4)))})
     with open(os.path.join(OUT, "bounds.geojson"), "w", encoding="utf-8") as f:
         json.dump({"type": "FeatureCollection", "features": feats}, f, separators=(",", ":"))
+
+
+BIKE_TYPES = ["자전거전용도로", "자전거보행자겸용도로", "자전거전용차로", "자전거우선도로", "미분류"]
+BIKE_CLASSES = ["국토종주 자전거길", "하천·둔치", "호수·해안", "물가(위치상)", "그 밖", "알 수 없음"]
+BIKE_MAJOR = ("한강|낙동강|금강|영산강|섬진강|형산강|남강|황강|금호강|태화강|수영강|만경강|동진강|임진강|갑천|탄천|안양천|중랑천|동천|"
+              "유등천|대전천|무심천|곡교천|삽교천|경안천|온천천")
+BIKE_JONGJU = r"국토종주|종주|아라자전거길|(한강|남한강|북한강|새재|낙동강|금강|영산강|섬진강|오천|동해안|제주환상)\s*자전거(길|도로)"
+
+
+def bike_class_fn(dongs):
+    """A function: 자전거도로 row → index in BIKE_CLASSES. By name first (국토종주 자전거길; a river or stream — '…천', '…강'
+    that is not a place name, or 천변·강변·둔치·제방·하천·수변; a lake or the coast), then by place: both ends within about
+    150 m of water in the land cover (WorldCover 'permanent water'). Rows without a telling name or coordinates: 알 수 없음."""
+    place = set()
+    for d in dongs:
+        for n in (d["sggnm"], d["sidonm"]):
+            for t in re.findall(r"[가-힣]+", n):
+                place.add(re.sub(r"(특별자치시|특별자치도|특별시|광역시|시|군|구)$", "", t))
+        place.add(re.sub(r"(동|가|읍|면)$", "", re.sub(r"\d", "", d["name"])))
+    place = {p for p in place if len(p) >= 2}
+    near = None
+    lc_path = os.path.join(RAW, "landcover.npz")
+    if os.path.exists(lc_path):
+        z = np.load(lc_path)
+        near = ndimage.binary_dilation(z["lc"] == 80, iterations=2)
+        lon0, lat1, k = float(z["lon0"]), float(z["lat1"]), int(z["per_deg"])
+
+    def wet(p):
+        if near is None or p is None:
+            return None
+        i, j = int((lat1 - p[1]) * k), int((p[0] - lon0) * k)
+        return bool(near[i, j]) if 0 <= i < near.shape[0] and 0 <= j < near.shape[1] else None
+
+    def river_word(n):
+        if re.search(r"천변|강변|둔치|제방|하천|수변|하류|상류|" + BIKE_MAJOR, n):
+            return True
+        for t in re.findall(r"[가-힣]+", n):
+            for i in range(len(t)):
+                for j in range(i + 2, min(len(t), i + 5) + 1):
+                    w, rest = t[i:j], t[j:]
+                    if (w[-1] in "천강" and w not in place and not any(w in p for p in place if len(p) > len(w))
+                            and not (rest.startswith("로") and any(w.endswith(p) for p in place)) and not w.endswith("온천")):
+                        return True
+        return False
+
+    def cls(r, a, b):
+        n = f"{r.get('rteNm') or ''} {r.get('majorStopover') or ''}"
+        if re.search(BIKE_JONGJU, n):
+            return 0
+        if river_word(n):
+            return 1
+        if re.search(r"호수|저수지|해안|바다|해변", n):
+            return 2
+        wa, wb = wet(a), wet(b)
+        if wa is None and wb is None:
+            return 5
+        return 3 if (wa if wa is not None else wb) and (wb if wb is not None else wa) else 4
+    return cls
+
+
+def bike_road(dongs, tree, pop_area):
+    """From raw/bike_road.json (전국자전거도로표준데이터): data/bike.geojson with the sections that can be drawn (a line
+    when the straight distance between the start and end fits the length, else a point), km per 시군구 by type, and
+    the national split of 자전거전용도로 by place (BIKE_CLASSES). Exact duplicate rows are dropped."""
+    path = os.path.join(RAW, "bike_road.json")
+    if not os.path.exists(path):
+        return {}, None
+    rows = load("bike_road.json")["rows"]
+    resolve = region_resolver(dongs)
+    short = {v: k for k, v in IND_SIDO.items() if k not in ("광주", "전남")}
+    sido_code = {d["sidonm"]: d["sido"] for d in dongs} | {"광주광역시": "12", "전라남도": "12", "강원도": "51", "전라북도": "52"}
+    cls = bike_class_fn(dongs)
+    f = lambda v: float(v) if v is not None and re.match(r"^\s*-?[\d.]+\s*$", str(v)) else None
+    pt = lambda la, lo: (f(lo), f(la)) if f(la) and f(lo) and 33 < f(la) < 39 and 124 < f(lo) < 132 else None
+    seen, feats, by = set(), [], defaultdict(lambda: [0.0] * len(BIKE_TYPES))
+    nat = [[0, 0.0] for _ in BIKE_CLASSES]
+    tot, drawn, lost = [0.0] * len(BIKE_TYPES), 0.0, defaultdict(float)
+    cache = {}
+    for r in rows:
+        key = tuple(str(r.get(k)) for k in ("rteNm", "sggNm", "totalLength", "roadStPointLat", "roadEdPointLat", "bikeRoadType"))
+        if key in seen:
+            continue
+        seen.add(key)
+        L = f(r.get("totalLength")) or 0.0
+        typ = r.get("bikeRoadType") or ""
+        t = next((i for i, n in enumerate(BIKE_TYPES[:4]) if typ.startswith(n)), 4)
+        a, b = pt(r.get("roadStPointLat"), r.get("roadStPointLon")), pt(r.get("roadEdPointLat"), r.get("roadEdPointLon"))
+        c = cls(r, a, b)
+        if t == 0:
+            nat[c][0] += 1
+            nat[c][1] += L
+        tot[t] += L
+        reg = (r.get("ctpvNm") or "", r.get("sggNm") or "")
+        if reg not in cache:
+            sd = sido_code.get(reg[0])
+            cache[reg] = resolve(f"{short.get(sd, reg[0])} {reg[1]}") if sd and reg[1] else []
+        codes = cache[reg]
+        if a and len(codes) > 1:  # a 시 with 구: the 구 its start point lies in
+            i = assign(tree, np.array([a[0]]), np.array([a[1]]))[0]
+            if i >= 0 and dongs[i]["sgg"] in codes:
+                codes = [dongs[i]["sgg"]]
+        if not codes:
+            lost[f"{reg[0]} {reg[1]}"] += L
+        for g in codes:
+            by[g][t] += L / len(codes)
+        props = {"n": r.get("rteNm") or "", "t": t, "l": L, "c": c}
+        if a and b:
+            dist = math.hypot((a[1] - b[1]) * 111.0, (a[0] - b[0]) * 111.0 * math.cos(math.radians(a[1])))
+            if 0.02 < dist <= L * 1.3 + 0.3:
+                feats.append({"type": "Feature", "properties": props, "geometry": {"type": "LineString", "coordinates": [[round(a[0], 4), round(a[1], 4)], [round(b[0], 4), round(b[1], 4)]]}})
+                drawn += L
+                continue
+        p = a or b
+        if p:
+            feats.append({"type": "Feature", "properties": props, "geometry": {"type": "Point", "coordinates": [round(p[0], 4), round(p[1], 4)]}})
+    with open(os.path.join(OUT, "bike.geojson"), "w", encoding="utf-8") as fo:
+        json.dump({"type": "FeatureCollection", "features": feats}, fo, ensure_ascii=False, separators=(",", ":"))
+    total = sum(tot)
+    dates = sorted(str(r.get("crtrYmd") or "") for r in rows if r.get("crtrYmd"))
+    meta = {"n": len(seen), "km": [round(v, 1) for v in tot], "types": BIKE_TYPES, "classes": BIKE_CLASSES,
+            "dedicated": [[n, round(l, 1)] for n, l in nat], "drawn_km": round(drawn, 1), "date": dates[-1] if dates else None,
+            "date_min": dates[0] if dates else None}
+    print(f"bike roads: {len(seen)} sections ({len(rows) - len(seen)} duplicates dropped), {total:,.0f} km; "
+          + ", ".join(f"{n} {v:,.0f}km" for n, v in zip(BIKE_TYPES, tot)) + f"; drawn as lines {drawn / total:.0%} of the length; "
+          + "전용도로 by place: " + ", ".join(f"{n} {l / max(1e-9, sum(x[1] for x in nat)):.1%}" for n, (_, l) in zip(BIKE_CLASSES, nat))
+          + "; not mapped: " + (", ".join(f"{k} {v:.0f}km" for k, v in lost.items()) or "-"), flush=True)
+    return {g: [round(v, 2) for v in vs] for g, vs in by.items()}, meta
 
 
 def write_beam(dongs, geoms):
@@ -1044,9 +1171,10 @@ def main():
             "grade_max": GRADE_MAX, "slope_max": SLOPE_MAX,
 "steep_sens": steep_sens, "landcover": hab_grid is not None,
             "grid_bounds": [[LON0, inv_merc_y(merc_y(LAT1))], [LON0 + np.degrees(W * PIX_M / R_EARTH), inv_merc_y(merc_y(LAT1) - H * PIX_M)]]}
+    sgg_bike_road, meta["bike_road"] = bike_road(dongs, tree, None)
     with open(os.path.join(OUT, "stats.json"), "w", encoding="utf-8") as f:
         json.dump({"meta": meta, "cols": cols, "rows": rows, "sgg_trips": sgg_trips, "sgg_urban": upis, "sgg_industrial": ind, "sgg_lh": lh, "sgg_age": age, "sgg_pm_ops": {g: v[0] for g, v in pm_ops.items()},
-                   "sgg_bike_ops": bike_ops, "sgg_ordinance": ordin},
+                   "sgg_bike_ops": bike_ops, "sgg_ordinance": ordin, "sgg_bike_road": sgg_bike_road},
                   f, ensure_ascii=False, separators=(",", ":"))
     feats = []
     for i, g in enumerate(geoms):
@@ -1072,7 +1200,7 @@ def main():
     write_beam(dongs, geoms)
     write_bounds(dongs, geoms)
     write_pm_supply(dongs, pop, tree)
-    for name in ("stats.json", "dongs.geojson", "stops.json", "stations.json", "pmgrid.png", "beam.geojson", "bounds.geojson"):
+    for name in ("stats.json", "dongs.geojson", "stops.json", "stations.json", "pmgrid.png", "beam.geojson", "bounds.geojson", "bike.geojson"):
         print(f"  {name}: {os.path.getsize(os.path.join(OUT, name)) / 1e6:.1f} MB", flush=True)
 
 
