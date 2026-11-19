@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>English tables · PM 대동여지도</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <nav class="tabs"><a href="index.html#all">종합<small>어디부터 봐야 하나?</small></a><a href="index.html#pm">공백·PM 연계·공급<small>어디가 비었고, PM이 메울 수 있나?</small></a><a href="index.html#policy">제도·규제<small>무엇이 PM을 막고 있나?</small></a><a href="accidents.html">안전 (합성데이터)<small>사고는 어떤 경향인가?</small></a><a href="about.html">자료·방법<small>어떻게 계산했나?</small></a><a href="en.html" class="on" aria-current="page">English<small>Tables for HQ</small></a></nav>
+  <h1>Shared PM in Korea: status and regulation by municipality</h1>
+  <p class="sub">English versions of the dashboard's status and regulation tables, one row per municipality (city / county / autonomous district; non-autonomous districts of a city are combined into the city). Names are romanized automatically, with the Korean name alongside. <span id="asof"></span></p>
+</header>
+
+<section class="region-bar" aria-label="Filter">
+  <label>Province <select id="sido"><option value="">All of Korea</option></select></label>
+  <label>Search <input id="q" type="search" placeholder="e.g. Suwon, 수원"></label>
+</section>
+
+<section>
+  <div class="head"><h2>1. Status</h2><button id="csv-status" type="button">CSV</button></div>
+  <p class="note" id="note-status"></p>
+  <div class="tablewrap"><table id="t-status"></table></div>
+</section>
+
+<section>
+  <div class="head"><h2>2. Regulation</h2><button id="csv-reg" type="button">CSV</button></div>
+  <p class="note" id="note-reg"></p>
+  <div class="tablewrap"><table id="t-reg"></table></div>
+</section>
+
+<section>
+  <h2>Glossary</h2>
+  <dl class="glossary" id="glossary"></dl>
+</section>
+
+<footer>
+  <p>Sources: MOLIT 2025 Advanced Mobility Survey (as of end-2024) and municipal open data for devices and parking zones; municipal PM / towing ordinance analysis and the towing practice table (Nov 2026); MOIS national bicycle road standard data; bus stops (MOLIT), rail stations (OpenStreetMap), resident population (MOIS). See <a href="about.html">자료·방법</a> (Korean) for methods.</p>
+</footer>
+<script src="en.js"></script>
+</body>
+</html>
