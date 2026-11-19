@@ -167,3 +167,10 @@ small.wide { color: var(--muted); }
 .verdict ul { margin: 4px 0 0; padding-left: 18px; }
 .verdict li { margin: 2px 0; }
 header.intro { padding-top: 0; }
+
+/* English tables page */
+.glossary { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 14px; }
+.glossary dt { font-weight: 600; }
+.glossary dd { margin: 0; color: var(--ink-2); }
+@media (max-width: 640px) { .glossary { grid-template-columns: 1fr; } .glossary dd { margin-bottom: 6px; } }
+#q { font-size: 14px; padding: 2px 6px; }
