@@ -64,9 +64,9 @@ function graceEn(g) {
 function noteEn(n) {
   if (!n) return '';
   const known = [
-    [/^일반견인구역은 (\d+)분 유예$/, '$1-min grace in general towing zones'],
-    [/^일반견인구역은 (\d+)시간 유예$/, '$1-hr grace in general towing zones'],
-    [/^일반견인구역은 (\d+)시간 유예 \(2026년 개편 전 서구: 서해구·검단구\)$/, '$1-hr grace in general towing zones (former Seo-gu: now Seohae-gu and Geomdan-gu)'],
+    [/^일반견인구역은 (\d+)분 유예$/, '$1-min grace in regular towing zones'],
+    [/^일반견인구역은 (\d+)시간 유예$/, '$1-hr grace in regular towing zones'],
+    [/^일반견인구역은 (\d+)시간 유예 \(2026년 개편 전 서구: 서해구·검단구\)$/, '$1-hr grace in regular towing zones (former Seo-gu: now Seohae-gu and Geomdan-gu)'],
     [/^유예시간 미상$/, 'Grace period unknown'],
     [/^견인하지 않음$/, 'Does not tow'],
     [/^최고속도 하향 시범사업과 함께 유예시간을 20분에서 1시간으로 연장\(2026-12-31까지\)$/, 'Grace period extended from 20 min to 1 hr until 31 Dec 2026, together with the speed-limit reduction pilot'],
@@ -83,7 +83,7 @@ const GLOSSARY = [
   ['Own ordinance / provincial only', 'Whether the municipality has its own ordinance, or is covered only by its province\'s ordinance (provincial rules apply to every municipality in the province).'],
   ['Towing basis', 'The PM ordinance allows the authority to move or tow improperly parked PMs.'],
   ['Towing fee', 'Fee charged to the operator per towed PM (KRW). The municipality\'s own fee, else the province\'s.'],
-  ['Grace period', 'Time after a report before a PM is towed. "No grace period" means immediate towing; some of these municipalities still allow a grace period in general towing zones (see note).'],
+  ['Grace period', 'Time after a report before a PM is towed. "No grace period" means immediate towing; some of these municipalities still allow a grace period in regular towing zones (see note).'],
   ['Bicycle towing', 'Shared bicycles are towed too; the fee is usually the same as for PMs.'],
   ['Designated parking system', 'PMs may be parked only in designated parking zones (지정주차제).'],
   ['E-scooter Free Zone', 'The municipality runs at least one street or zone where PMs are banned (킥보드 없는 거리); not the whole municipality.'],
