@@ -35,7 +35,7 @@ const METRICS = [
 ];
 const M = id => METRICS.find(m => m.id === id);
 
-let BKR = {}, D, C, GEO, T, U, IND, LH, AGE, OPS, BIKE, ORD, PMS = { fleet: [], parking: [], parking_sources: [], parking_units: [], seoul_companies: {} }, FLEET = {}, PARKU = {}, SURV = {}, SGGPOP, meta, map, sortSgg = { k: 'v', asc: false }, sortDong = { k: 'v', asc: false }, pickSgg = null, pickKey = null, pickSet = null;
+let OPSNEW = {}, BKR = {}, D, C, GEO, T, U, IND, LH, AGE, OPS, BIKE, ORD, PMS = { fleet: [], parking: [], parking_sources: [], parking_units: [], seoul_companies: {} }, FLEET = {}, PARKU = {}, SURV = {}, SGGPOP, meta, map, sortSgg = { k: 'v', asc: false }, sortDong = { k: 'v', asc: false }, pickSgg = null, pickKey = null, pickSet = null;
 const NARROW = window.matchMedia('(max-width: 640px)').matches;  // phones: legend and layer list start folded
 const st = { metric: 'either', sido: '', urban: false, hab: true, legend: !NARROW, insMore: false, tab: 'all', gu: false };
 // 일반구 (고양시 덕양구처럼 자치구가 아닌 시 안의 구): 기초지자체 단위로 볼 때는 그 시가 한 단위(key 'c' + 시 코드).
@@ -123,6 +123,12 @@ async function main() {
   SGGPOP = {};
   for (const r of D) SGGPOP[r[C.sgg]] = (SGGPOP[r[C.sgg]] || 0) + (r[C.pop] || 0);
   buildCity();
+  // 공유 PM 운영 comes from the 2024년 말 survey; a 시군구 it marks as without shared PM but whose own device count (a
+  // 시군구 or 시 figure, newer than the survey) is above zero has shared PM now: the newer figure wins
+  for (const [g, u] of Object.entries(FLEET)) {
+    const d = String(u.date || '').split(' · ').sort().pop();
+    if (OPS[g] === 0 && u.total > 0 && new Set(u.sgg.map(q => q.slice(0, 4))).size === 1 && d > (meta.pm_ops_date || '')) { OPS[g] = 1; OPSNEW[g] = d; }
+  }
   $('asof').textContent = `기준: 정류장 위치 ${meta.stops_collected} 수집 · 정차 노선수 ${meta.route_days.length ? meta.route_days.map(d => d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6)).join(', ') + ' 운행일' : '수집 중'}${meta.upis_year ? ' · 도시계획현황 ' + meta.upis_year + '년' : ''}${meta.trips_months.length ? ' · 교통카드 통행 ' + meta.trips_months.map(m => m.slice(0, 4) + '년 ' + +m.slice(4) + '월').join(', ') : ''} · 인구 ${meta.pop_ym.slice(0, 4)}년 ${+meta.pop_ym.slice(4)}월 · 행정동 경계 ${meta.boundary.replace('ver', '')}`;
   for (const m of METRICS) $('metric').add(new Option(m.name, m.id));
   const sidos = [...new Map(D.map(r => [r[C.sido], r[C.sidonm]])).entries()].sort((a, b) => a[0].localeCompare(b[0]));
@@ -560,7 +566,7 @@ function renderInsights() {
     if (IND[g]) add('pm', `산업단지 ${IND[g].n}곳(가동업체 ${fmt(IND[g].firms)}곳)이 있어 출퇴근 PM 연계 후보가 됩니다.`);
     // 공급
     const svy = P.sv;
-    if (OPS[g] != null) add('supply', OPS[g] ? `공유 PM이 운영되고 있습니다(${opsDate()}).` : `<b>공유 PM이 없습니다</b>(${opsDate()}). PM으로 메울 땅은 서비스가 들어와야 쓸 수 있습니다.`);
+    if (OPS[g] != null) add('supply', OPSNEW[g] ? `공유 PM이 운영되고 있습니다(${esc(OPSNEW[g])} PM 기기 자료 기준. ${opsDate()} 조사에서는 미운영).` : OPS[g] ? `공유 PM이 운영되고 있습니다(${opsDate()}).` : `<b>공유 PM이 없습니다</b>(${opsDate()}). PM으로 메울 땅은 서비스가 들어와야 쓸 수 있습니다.`);
     const fu = P.fleetU;
     if (fu) add('supply', (P.fl.wide ? `PM 기기는 ${esc(fu.name)} 전체로만 집계돼 있습니다: <b>${fmt(fu.total)}대</b>` : `PM 기기: <b>${fmt(P.fleet)}대</b>${P.fl.partial ? ' (일부 구만)' : ''}`) +
       (P.fl.us.length === 1 && fu.ops.length ? ` (${fu.ops.slice(0, 3).map(([o, n]) => `${esc(o)} ${fmt(n)}`).join(', ')}${fu.ops.length > 3 ? ' 등' : ''})` : '') + `. <small>${esc(P.fleetDate)}</small>`);
@@ -748,7 +754,7 @@ function renderSgg(rows, m) {
     { k: 'v', h: m.name, f: v => mfmt(m, v) }, { k: 'pop', h: '인구', f: fmt }, { k: 'area', h: '면적(㎢)', f: fmt }, { k: 'stops', h: '정류장', f: fmt },
     { k: 'either', h: '버스·철도 도보권 밖', f: pct }, { k: 'good', h: '노선 넉넉한 정류장 도보권 밖', f: pct },
     { k: 'pm', h: 'PM 10분 새로 닿는 면적', f: pct }, { k: 'pmidx', h: 'PM 잠재 지수', f: v => v == null ? '-' : (v * 100).toFixed(1) },
-    { k: 'pmops', h: `공유 PM 운영 (${opsDate()})`, f: v => opsText(v) }, { k: 'bike', h: `공유자전거 운영 (${opsDate()})`, f: (v, r) => bikeText(v == null ? null : [v, r.bikeKind]) },
+    { k: 'pmops', h: `공유 PM 운영 (${opsDate()})`, f: (v, r) => opsText(v) + (OPSNEW[r.sgg] || OPSNEW[membersOf(r.sgg)[0]] ? ` <small title="${opsDate()} 조사에서는 미운영">${esc(OPSNEW[r.sgg] || OPSNEW[membersOf(r.sgg)[0]])} 기기 자료</small>` : '') }, { k: 'bike', h: `공유자전거 운영 (${opsDate()})`, f: (v, r) => bikeText(v == null ? null : [v, r.bikeKind]) },
     // a value collected only for a whole 시도 or 시 (서울 PM 기기, 시도별 앱 이용 …) is not repeated as each 구's own:
     // counts show as '서울 전체 18,548대' in grey and sort last, rates as the area's average
     { k: 'fleet', h: 'PM 기기 수', f: (v, r) => v == null ? (r.fl?.wide ? wideTxt(r.fl.u, fmt(r.fl.u.total) + '대') : '-') : fmt(v) + partTag(r.fl) + ` <small>${esc(r.fleetDate)}</small>` },
@@ -928,7 +934,7 @@ function renderHead(scope, x) {
     chip.push(['PM 기기', fv, [fs, P.fleetDate ? esc(P.fleetDate) : ''].filter(Boolean).join(' · ')]);
     chip.push(['공유자전거', bv, [bs, sv?.bikes != null ? meta2() : ''].filter(Boolean).join(' · ')]);
     chip.push(['PM 주차구역', kv, [ks, P.parkd != null ? `1㎢당 ${P.parkd.toFixed(1)}곳` : ''].filter(Boolean).join(' · ')]);
-    chip.push(['공유 PM', OPS[pickSgg] == null ? '-' : OPS[pickSgg] ? '운영' : '미운영', opsDate()]);
+    chip.push(['공유 PM', OPS[pickSgg] == null ? '-' : OPS[pickSgg] ? '운영' : '미운영', OPSNEW[pickSgg] ? `${esc(OPSNEW[pickSgg])} 기기 자료 (${opsDate()} 조사는 미운영)` : opsDate()]);
     if (Beam.loaded()) chip.push(['빔모빌리티', Beam.kind(pickSgg) || '미운영', '']);
   } else {
     const units = [...new Set(allSggs.map(g => FLEET[g]).filter(Boolean))].filter(u => !u.partial);
