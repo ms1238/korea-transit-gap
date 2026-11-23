@@ -458,6 +458,9 @@ def load_ordinance(dongs):
                 t = int(r["PM견인"] == "1")
                 # whose towing it is: a 광역 (서울특별시, 대구광역시 …, its every 구) or the 시군구 itself
                 o["lv"]["t"] = 0 if not t else 1 if re.search(r"(특별시|광역시|도)$", r["지역"].strip()) else 2
+                if (r.get("자전거견인") or "").strip() in ("0", "1"):  # the table may also say whether bicycles are towed
+                    o["b"] = int(r["자전거견인"].strip())
+                    o["lv"]["b"] = 0 if not o["b"] else 1 if re.search(r"(특별시|광역시|도)$", r["지역"].strip()) else 2
                 o.update(t=t, fee=int(r["견인료"]) if t and r["견인료"] else None, planned=False, src=r["지역"] if t else None,
                          grace=r["유예시간"] or None, note=r["비고"] or None, practice=r["출처"])
         print(f"towing practice: {len(prs)} regions, {sum(len(c) for _, c in prs)} 시군구", flush=True)
