@@ -54,11 +54,11 @@ const TERM = {
   lv: ['No', 'Provincial/metropolitan ordinance only', 'Yes (own ordinance)'],
   lvPolicy: ['No', 'Yes (provincial/metropolitan)', 'Yes'],
   bikeKind: { 공영: 'public', 민영: 'private', 혼합: 'public + private', '': '' },
-  beam: { 직영: 'Company-operated', 프랜차이즈: 'Franchise' },
+  beam: { 직영: 'Directly operated', 프랜차이즈: 'Franchise' },
 };
 function graceEn(g) {
   if (!g) return '';
-  if (/즉시/.test(g)) return 'Immediate';
+  if (/즉시/.test(g)) return 'No grace period';
   return g.replace(/(\d+)\s*분/, '$1 min').replace(/(\d+)\s*시간/, '$1 hr');
 }
 function noteEn(n) {
@@ -83,10 +83,10 @@ const GLOSSARY = [
   ['Own ordinance / provincial only', 'Whether the municipality has its own ordinance, or is covered only by its province\'s ordinance (provincial rules apply to every municipality in the province).'],
   ['Towing basis', 'The PM ordinance allows the authority to move or tow improperly parked PMs.'],
   ['Towing fee', 'Fee charged to the operator per towed PM (KRW). The municipality\'s own fee, else the province\'s.'],
-  ['Grace period', 'Time after a report before a PM is towed. "Immediate" zones may still allow a grace period in general towing zones (see note).'],
+  ['Grace period', 'Time after a report before a PM is towed. "No grace period" means immediate towing; some of these municipalities still allow a grace period in general towing zones (see note).'],
   ['Bicycle towing', 'Shared bicycles are towed too; the fee is usually the same as for PMs.'],
-  ['Designated parking', 'PMs may be parked only in designated parking zones (지정주차제).'],
-  ['Kick-scooter-free street', 'The municipality runs at least one street where PMs are banned (킥보드 없는 거리); not the whole municipality.'],
+  ['Designated parking system', 'PMs may be parked only in designated parking zones (지정주차제).'],
+  ['E-scooter Free Zone', 'The municipality runs at least one street or zone where PMs are banned (킥보드 없는 거리); not the whole municipality.'],
   ['Bicycle road types', 'Dedicated bike path (physically separated, 자전거전용도로); shared bike–pedestrian path (겸용도로); bike lane (전용차로); bike-priority road (우선도로).'],
   ['Province/city total', 'Some figures exist only for a whole province or city (e.g. Seoul\'s device count); they are shown as that total, not as the municipality\'s own figure.'],
 ];
@@ -181,8 +181,8 @@ const REG = [
   { k: 'fee', h: 'Towing fee (KRW)', f: (v, u) => v == null ? '' : num(v) + (u.planned ? ' <small>(planned)</small>' : '') },
   { k: 'graceMin', h: 'Grace period', l: 1, f: (v, u) => esc(u.grace) + (u.note && u.tow ? ` <small>${esc(u.note)}</small>` : '') },
   { k: 'btow', h: 'Bicycle towing', l: 1, f: (v, u) => v == null ? '' : v ? 'Yes' + (u.tow && u.fee ? ' <small>(same fee as PM)</small>' : '') + (u.btowLv === 1 ? ' <small>(provincial ordinance)</small>' : '') : 'No' },
-  { k: 'dpark', h: 'Designated parking', l: 1, f: v => v == null ? '' : TERM.lvPolicy[v] },
-  { k: 'nokick', h: 'Kick-scooter-free street', l: 1, f: v => v == null ? '' : TERM.lvPolicy[v] },
+  { k: 'dpark', h: 'Designated parking system', l: 1, f: v => v == null ? '' : TERM.lvPolicy[v] },
+  { k: 'nokick', h: 'E-scooter Free Zone', l: 1, f: v => v == null ? '' : TERM.lvPolicy[v] },
   { k: 'source', h: 'Towing source', l: 1, f: (v, u) => esc(v) + (!u.tow && u.note ? ` <small>${esc(u.note)}</small>` : '') },
 ];
 
@@ -206,7 +206,7 @@ function render() {
   $('note-status').textContent = `${data.length} municipalities · population ${num(sum('pop'))} · shared PM service in ${data.filter(u => u.pmops === 1).length}, none in ${data.filter(u => u.pmops === 0).length} · Beam operates in ${data.filter(u => u.beam).length}. Blank = no data (not zero). Grey "… total" = figure exists only for the whole province or city.`;
   const tows = data.filter(u => u.tow), fees = tows.map(u => u.fee).filter(Boolean).sort((a, b) => a - b);
   $('note-reg').textContent = `${tows.length} of ${data.length} municipalities tow PMs` + (fees.length ? ` (fee KRW ${num(fees[0])}–${num(fees[fees.length - 1])}, median ${num(fees[Math.floor(fees.length / 2)])})` : '') +
-    ` · designated parking in ${data.filter(u => u.dpark).length} · kick-scooter-free streets in ${data.filter(u => u.nokick).length}. Where a towing practice table exists it overrides the ordinance for towing, fee and grace period.`;
+    ` · designated parking system in ${data.filter(u => u.dpark).length} · E-scooter Free Zones in ${data.filter(u => u.nokick).length}. Where a towing practice table exists it overrides the ordinance for towing, fee and grace period.`;
 }
 function csv(name, cols, rows) {
   const strip = s => String(s ?? '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
