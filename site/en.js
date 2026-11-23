@@ -69,6 +69,7 @@ function noteEn(n) {
     [/^일반견인구역은 (\d+)시간 유예 \(2026년 개편 전 서구: 서해구·검단구\)$/, '$1-hr grace in regular towing zones (former Seo-gu: now Seohae-gu and Geomdan-gu)'],
     [/^유예시간 미상$/, 'Grace period unknown'],
     [/^견인하지 않음$/, 'Does not tow'],
+    [/^자전거등\(자전거·PM\) 1대당 견인료 3만원, 보관료 30분당 500원\(1일 최대 8,000원, 1회 최대 200,000원\)$/, 'KRW 30,000 per bicycle or PM; storage fee KRW 500 per 30 min (max KRW 8,000 a day, KRW 200,000 per tow)'],
     [/^최고속도 하향 시범사업과 함께 유예시간을 20분에서 1시간으로 연장\(2026-12-31까지\)$/, 'Grace period extended from 20 min to 1 hr until 31 Dec 2026, together with the speed-limit reduction pilot'],
   ];
   for (const [re, en] of known) if (re.test(n)) return n.replace(re, en);
@@ -158,7 +159,7 @@ function build() {
       o, ordO: o ? o.lv?.o ?? (o.o ? 2 : 0) : null, ordM: o ? o.lv?.m ?? (o.m ? 2 : 0) : null, tow: o ? o.t : null, towLv: o?.lv?.t ?? null,
       fee: o?.t ? o.fee : null, planned: !!o?.planned, grace: o?.t ? graceEn(o.grace) : '', graceMin: o?.t && o.grace ? (/즉시/.test(o.grace) ? 0 : +((/(\d+)\s*분/.exec(o.grace) || [])[1] || ((/(\d+)\s*시간/.exec(o.grace) || [])[1] || 0) * 60)) : null,
       note: o ? noteEn(o.note) : '', btow: o ? o.b : null, btowLv: o?.lv?.b ?? null, dpark: o?.lv?.p ?? null, nokick: o?.lv?.n ?? null,
-      source: o?.practice ? 'Towing practice table' + (/구미/.test(o.practice) ? ' (Gumi, Nov 2026)' : ' (Nov 2026)') : o ? 'Ordinance analysis' : '' };
+      source: o?.practice ? (/세종/.test(o.practice) ? 'Sejong towing fee standard (Nov 2026)' : 'Towing practice table' + (/구미/.test(o.practice) ? ' (Gumi, Nov 2026)' : ' (Nov 2026)')) : o ? 'Ordinance analysis' : '' };
   });
 }
 
