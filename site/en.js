@@ -123,6 +123,12 @@ function build() {
   for (const u of P.survey || []) for (const g of u.sgg) (SURV[g] ??= []).push(u);
   const unitsOf = (map, mem) => { const us = [...new Set(mem.map(g => map[g]).filter(Boolean))]; return us.length ? { us, wide: us.some(u => u.sgg.some(g => !mem.includes(g))), partial: mem.some(g => !map[g]) } : null; };
   const short = n => { const t = String(n).split(' ').pop(); return SIDO_EN[t] || enName(t); };
+  // shared PM service from the end-2024 survey; a newer device count above zero for the municipality itself wins
+  const OPSNEW = {};
+  for (const [g, u] of Object.entries(FLEET)) {
+    const d = String(u.date || '').split(' · ').sort().pop();
+    if (S.sgg_pm_ops?.[g] === 0 && u.total > 0 && new Set(u.sgg.map(q => q.slice(0, 4))).size === 1 && d > (S.meta.pm_ops_date || '')) OPSNEW[g] = d;
+  }
   units = [...by.values()].map(u => {
     const mem = [...u.sggs], g = mem[0];
     let pop = 0, hab = 0, e = 0, eA = 0, pmv = 0, pA = 0;
@@ -141,7 +147,7 @@ function build() {
     const o = S.sgg_ordinance?.[g], bikeOps = S.sgg_bike_ops?.[g];
     return { ...u, mem, rep: g, name: enName(u.kname), pop, hab,
       either: eA ? 1 - e / eA : null, pm: pA ? pmv / pA : null,  // h_either: share within walking distance
-      pmops: S.sgg_pm_ops?.[g] ?? null, bikeops: bikeOps ? bikeOps[0] : null, bikekind: bikeOps ? TERM.bikeKind[bikeOps[1]] ?? bikeOps[1] : '',
+      pmops: OPSNEW[g] ? 1 : S.sgg_pm_ops?.[g] ?? null, opsNew: OPSNEW[g] || '', bikeops: bikeOps ? bikeOps[0] : null, bikekind: bikeOps ? TERM.bikeKind[bikeOps[1]] ?? bikeOps[1] : '',
       fleet: flTot, fleetWide: fl?.wide ? `${short(fl.us[0].name)} total ${num(fl.us[0].total)}` : '', fleetPart: !!fl?.partial && !fl.wide,
       fleetDate: fl ? [...new Set(fl.us.map(x => x.date))].join(' · ') : '', fleetPc: fl && flPop ? (fl.wide ? fl.us[0].total : flTot) / flPop * 1000 : null, fleetPcAvg: !!fl?.wide,
       bikes: sv && !sv.sgg.some(q => !mem.includes(q)) ? (sv.bike_pub || 0) + (sv.bike_pri || 0) : null,
@@ -162,7 +168,7 @@ const STATUS = [
   { k: 'pop', h: 'Population', f: v => num(v) },
   { k: 'either', h: 'Not walkable to transit (% habitable land)', f: pct },
   { k: 'pm', h: 'Reachable by PM in 10 min (% habitable land)', f: pct },
-  { k: 'pmops', h: 'Shared PM service', f: v => v == null ? '' : v ? 'Yes' : 'No' },
+  { k: 'pmops', h: 'Shared PM service', f: (v, u) => v == null ? '' : v ? 'Yes' + (u.opsNew ? ` <small>(device data ${esc(u.opsNew)}; none in the end-2024 survey)</small>` : '') : 'No' },
   { k: 'fleet', h: 'Shared PM devices', f: (v, u) => v != null ? num(v) + (u.fleetPart ? ' <small>(some districts only)</small>' : '') + ` <small>${esc(u.fleetDate)}</small>` : u.fleetWide ? `<small>${esc(u.fleetWide)}</small>` : '' },
   { k: 'fleetPc', h: 'Devices per 1,000 residents', f: (v, u) => v == null ? '' : num(v, 1) + (u.fleetPcAvg ? ' <small>(area avg.)</small>' : '') },
   { k: 'bikeops', h: 'Shared bike service', f: (v, u) => v == null ? '' : v ? 'Yes' + (u.bikekind ? ` (${esc(u.bikekind)})` : '') : 'No' },
