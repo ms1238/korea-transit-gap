@@ -56,6 +56,7 @@ GOOD_ROUTES = 3  # a stop with fewer routes counts as sparsely served
 OSM_FILL, DEDUP_M = 0.5, 50
 ROUTE_MATCH_MIN = 0.6
 GAP_STOPS_PER_1000, GAP_DENSITY = 2.0, 3000  # a non-dense 시군구 (people per ㎢) with fewer stops per 1,000 people lacks stop data
+STOPS_AS_IS = {"51210": "속초시"}  # 시군구 whose few stops are taken as complete (공공데이터포털 정류장 자료 그대로): never 'gap'
 GAP_STOPS_PER_HAB_KM2 = 1.0  # …as does one with fewer stops per ㎢ of 생활권 land (the median 시군구 has about 10)
 SIDO_GROUP = {"29": "12", "46": "12", "42": "51", "45": "52"}  # 광주·전남 → 전남광주통합특별시, old 강원·전북 codes
 SIMPLIFY_DEG = 0.0004  # ~40 m
@@ -982,7 +983,7 @@ def main():
     for i, d in enumerate(dongs):
         g_pop[d["sgg"]] += pop[i] or 0
         g_area[d["sgg"]] += area[i] / 1e6
-    stop_gap = {g for g in g_pop if g_pop[g] and g_stop[g] / g_pop[g] * 1000 < GAP_STOPS_PER_1000 and g_pop[g] / g_area[g] < GAP_DENSITY}
+    stop_gap = {g for g in g_pop if g_pop[g] and g_stop[g] / g_pop[g] * 1000 < GAP_STOPS_PER_1000 and g_pop[g] / g_area[g] < GAP_DENSITY} - set(STOPS_AS_IS)
     print("stop data gaps (no bus figures): " + ", ".join(sorted(f"{dongs[np.where(sgg_of == g)[0][0]]['sggnm']}({g_stop[g]})" for g in stop_gap)), flush=True)
 
     # 3. coverage on a Web Mercator pixel grid, which is also the PM grid image
@@ -1055,7 +1056,7 @@ def main():
         g_hab, g_lack = defaultdict(float), set()
         for i, d in enumerate(dongs):
             g_hab[d["sgg"]] += area[i] / 1e6 * hab[i]
-        g_lack = {g for g in g_hab if g_hab[g] and g_stop[g] / g_hab[g] < GAP_STOPS_PER_HAB_KM2} - stop_gap
+        g_lack = {g for g in g_hab if g_hab[g] and g_stop[g] / g_hab[g] < GAP_STOPS_PER_HAB_KM2} - stop_gap - set(STOPS_AS_IS)
         print("stop data gaps by 생활권 area: " + (", ".join(sorted(f"{dongs[np.where(sgg_of == g)[0][0]]['sggnm']}({g_stop[g]} stops, "
               f"{g_hab[g]:.0f}㎢)" for g in g_lack)) or "-"), flush=True)
         stop_gap |= g_lack
