@@ -375,6 +375,49 @@ print("UNCOVERED", uncovered, "spots in blocks", sum(c["spots"] for c in C1), "o
 json.dump([{k: v for k, v in c.items() if k != "geom"} for c in C1 + C2], open(os.path.join(OUT, "candidates.json"), "w"), ensure_ascii=False, indent=1)
 import pickle; pickle.dump(dict(C1=C1, C2=C2), open(os.path.join(OUT, "cand.pkl"), "wb"))
 
+# ---------- 블록 안 고른 배치(Meng et al. 2025): 블록 면적의 90% 이상이 200m 안, 밀도 25개/㎢ 이상이 되도록 내부 구역 추가
+import numpy as _np
+def fill_block(g, have):
+    xs0, ys0, xs1, ys1 = g.bounds
+    samp = [Point(x, y) for x in _np.arange(xs0, xs1, 20) for y in _np.arange(ys0, ys1, 20) if g.contains(Point(x, y))]
+    inner = g.buffer(-10)
+    cands = [Point(x, y) for x in _np.arange(xs0, xs1, 40) for y in _np.arange(ys0, ys1, 40) if inner.contains(Point(x, y))]
+    pts = list(have); new = []
+    cov = lambda P_: sum(any(s.distance(q) <= 200 for q in P_) for s in samp) / len(samp)
+    covered = [any(s.distance(q) <= 200 for q in pts) for s in samp]
+    while sum(covered) / len(samp) < 0.92:
+        best, gain = None, 0
+        for q in cands:
+            if any(q.distance(r) < 80 for r in pts):
+                continue
+            gn = sum(1 for k, s in enumerate(samp) if not covered[k] and s.distance(q) <= 200)
+            if gn > gain:
+                best, gain = q, gn
+        if best is None:
+            break
+        pts.append(best); new.append(best)
+        covered = [c or s.distance(best) <= 200 for c, s in zip(covered, samp)]
+    need = int(_np.ceil(g.area / 1e6 * 25))
+    while len(pts) < need:
+        best = max((q for q in cands if all(q.distance(r) >= 80 for r in pts)), key=lambda q: min(q.distance(r) for r in pts), default=None)
+        if best is None:
+            break
+        pts.append(best); new.append(best)
+    c200 = sum(covered) / len(samp)
+    c100 = sum(any(s.distance(q) <= 100 for q in pts) for s in samp) / len(samp)
+    return new, c200, c100
+for c in C1 + C2:
+    gb = c["geom"].buffer(30)
+    have = [p for p in (allspots1 + allspots2) if gb.contains(p)]
+    new, c200, c100 = fill_block(c["geom"], have)
+    c.update(have=len(have), interior=new, total=len(have) + len(new), cov200=c200, cov100=c100,
+             dens=(len(have) + len(new)) / (c["geom"].area / 1e6))
+    print("FILL", c["name"], c["have"], "+", len(new), "=", c["total"], f"{c['dens']:.0f}/km2 cov200 {c200:.0%}")
+inblock = shapely.union_all([c["geom"].buffer(30) for c in C1])
+outside1 = [p for p in allspots1 if not inblock.contains(p)]
+print("OUTSIDE1", len(outside1), "corridor", sum(1 for p, _ in sp1 if not inblock.contains(p)), "point", sum(1 for p, _ in pt1_tour + pt1_lodge if not inblock.contains(p)))
+json.dump([{k: (v if k != "interior" else len(v)) for k, v in c.items() if k != "geom"} for c in C1 + C2], open(os.path.join(OUT, "candidates.json"), "w"), ensure_ascii=False, indent=1)
+
 # ---------- 후보지 위치도: 개관 1장 + 후보지별 확대 패널
 NUM = "①②③④⑤⑥⑦⑧⑨"
 def draw_cand(ax, c, i, lw=2.4, ls="-", col="#d7191c", label=True, fs=11):
@@ -400,14 +443,19 @@ for _, ln in phase1:
     ax.plot(*ln.xy, color="#2c6fb7", lw=1.6, alpha=.55)
 for _, ln in phase2:
     ax.plot(*ln.xy, color="#2c6fb7", lw=1.2, alpha=.45, ls=(0, (2, 1.5)))
-spots_on(ax, allspots1, 3.2)
+spots_on(ax, outside1, 3.0)
+for c in C1 + C2:
+    spots_on(ax, [p for p in allspots1 + allspots2 if c["geom"].buffer(30).contains(p)], 3.4)
+    for q in c["interior"]:
+        ax.plot(q.x, q.y, "o", ms=3.8, mfc="#16a085", mec="white", mew=.5, zorder=7, clip_on=True)
 for c, i, ls in ALL:
     draw_cand(ax, c, i, ls=ls, col="#d7191c" if ls == "-" else "#e67e22")
 stations_on(ax)
 scalebar(ax, cx0 + 200, cy0 + 200, 500)
 ax.legend(handles=[Patch(fc="#d7191c", alpha=.25, ec="#d7191c", lw=2, label="1단계 가상주차구역 후보지"),
                    Patch(fc="#e67e22", alpha=.25, ec="#e67e22", lw=2, ls="--", label="2단계 후보지"),
-                   Line2D([], [], marker="o", ls="", mfc="#1f4e8c", mec="white", ms=5, label="가상주차구역(지점)"),
+                   Line2D([], [], marker="o", ls="", mfc="#1f4e8c", mec="white", ms=5, label="가상주차구역(회랑·거점)"),
+                   Line2D([], [], marker="o", ls="", mfc="#16a085", mec="white", ms=5, label="블록 내부 추가 구역"),
                    Line2D([], [], marker="s", ls="", mfc="#f39c12", mec="#7a4a00", ms=8, label="MaaS 스테이션"),
                    Line2D([], [], color="#2c6fb7", lw=2, alpha=.6, label="회랑")], loc="upper left", fontsize=7.5, framealpha=.95).set_zorder(20)
 ax.set_title("가상주차구역 후보지 위치도 (청초호·해안길)", fontsize=12, weight="bold")
@@ -422,13 +470,19 @@ for (c, i, ls), ax in zip(ALL, axs.flat):
     for _, ln in phase1 + phase2:
         ax.plot(*ln.xy, color="#2c6fb7", lw=1.2, alpha=.45)
     spots_on(ax, allspots1 + allspots2, 4)
+    for q in c["interior"]:
+        ax.plot(q.x, q.y, "o", ms=4.4, mfc="#16a085", mec="white", mew=.5, zorder=7, clip_on=True)
     draw_cand(ax, c, i, lw=2.6, ls=ls, col="#d7191c" if ls == "-" else "#e67e22", label=False)
     stations_on(ax, 11, 7)
     scalebar(ax, mx - w + 60, my - h + 60, 200)
     stx = ", ".join(c["stations"]) if c["stations"] else "-"
     ax.set_title(f"{NUM[i]} {c['name']}" + (" (2단계)" if ls == "--" else ""), fontsize=9.5, weight="bold", loc="left")
-    ax.set_xlabel(f"(면적) {c['area']:.2f}㎢ / (가상주차구역) {c['spots']}개소 / (스테이션) {stx}", fontsize=8.2)
+    ax.set_xlabel(f"(면적) {c['area']:.2f}㎢ / (가상주차구역) {c['total']}개소 / (200m 커버) {c['cov200']:.0%} / (스테이션) {stx}", fontsize=7.8)
 for ax in list(axs.flat)[n:]:
     ax.axis("off")
 fig.tight_layout(); fig.savefig(os.path.join(OUT, "map_candidates_panels.png")); plt.close(fig)
-json.dump([{**{k: v for k, v in c.items() if k != "geom"}} for c in C1 + C2], open(os.path.join(OUT, "candidates.json"), "w"), ensure_ascii=False, indent=1)
+
+inb2 = shapely.union_all([c["geom"].buffer(30) for c in C1 + C2])
+o2c = sum(1 for p, _ in sp2 if not inb2.contains(p)); o2p = sum(1 for p, _ in pt2_tour + pt2_lodge if not inb2.contains(p))
+print("P2", sum(c["total"] for c in C2), round(sum(c["area"] for c in C2), 2), "outside corridor", o2c, "points", o2p)
+print("P1", sum(c["total"] for c in C1), sum(c["have"] for c in C1), sum(len(c["interior"]) for c in C1), round(sum(c["area"] for c in C1), 2))
