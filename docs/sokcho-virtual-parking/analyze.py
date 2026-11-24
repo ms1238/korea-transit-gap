@@ -308,3 +308,127 @@ for i, g in enumerate(sorted(getattr(zoneU, "geoms", [zoneU]), key=lambda g: -g.
     lo, la = to_ll(c.x, c.y)
     d1 = min(ln.distance(c) for _, ln in phase1); d2 = min(ln.distance(c) for _, ln in phase2)
     print("CL", i, round(g.area / 1e4, 1), "ha", round(float(la), 4), round(float(lo), 4), "L", inL, "T", len(inT), "B", inB, "d1", round(d1), "d2", round(d2))
+
+# ---------- 가상주차구역 후보지(블록): A등급 군집 + 스테이션 + S2 구간을 묶어 단순한 블록 경계로
+from shapely.geometry import MultiPolygon
+JS = dict(join_style=2)
+water = shapely.union_all([cheongcho.buffer(5), yeongnang.buffer(5)])
+land = cityM.difference(water)
+corr1 = shapely.union_all([ln for _, ln in phase1]); corr2 = shapely.union_all([ln for _, ln in phase2])
+def blocks(seeds):
+    u = shapely.union_all(seeds).buffer(90, **JS).buffer(-70, **JS).simplify(30)
+    u = u.intersection(land)
+    return [g for g in getattr(u, "geoms", [u]) if g.geom_type == "Polygon" and g.area > 30000]
+zA = list(getattr(zoneU, "geoms", [zoneU]))
+s2seg = coast1.intersection(S2PT.buffer(S2R)).buffer(45, cap_style=2)
+GROUPS = [  # (이름, 단계, 기준점, 포함 스테이션)
+    ("교동·청초호 서측", 1, P(38.1996, 128.5824), []),
+    ("중앙시장·갯배", 1, P(38.2031, 128.5907), ["S4"]),
+    ("엑스포타워·청초호 남서측", 1, P(38.1920, 128.5799), ["S3"]),
+    ("조양동(청초호 남측)", 1, P(38.1899, 128.5910), []),
+    ("속초해수욕장·고속버스터미널", 1, P(38.1887, 128.6014), ["S1"]),
+    ("청호해변(해안 자전거길)", 1, S2PT, ["S2"]),
+    ("시외버스터미널·속초항", 2, P(38.2101, 128.5924), []),
+    ("동명항·영금정·등대전망대", 2, P(38.2136, 128.5977), []),
+]
+seeds = {i: [] for i in range(len(GROUPS))}
+for g in zA:
+    if g.area < 4000 or min(corr1.distance(g), corr2.distance(g)) > 300:
+        continue
+    i = min(range(len(GROUPS) - 0), key=lambda k: GROUPS[k][2].distance(g.centroid) if k != 5 else 1e9)
+    if GROUPS[i][2].distance(g.centroid) < 700:
+        seeds[i].append(g)
+for i, (_, _, _, sts) in enumerate(GROUPS):
+    seeds[i] += [STATIONS[k].buffer(130) for k in sts if k != "S2"]
+seeds[5] = [s2seg]
+def block(gs):
+    u = shapely.union_all(gs).buffer(90, **JS).buffer(-70, **JS).simplify(45).intersection(land)
+    return max(getattr(u, "geoms", [u]), key=lambda x: x.area) if not u.is_empty else None
+cand, taken = [], None
+for i, (nm, ph, _, _) in enumerate(GROUPS):
+    if not seeds[i]:
+        continue
+    g = block(seeds[i])
+    if taken is not None:
+        g = g.difference(taken)
+        g = max(getattr(g, "geoms", [g]), key=lambda x: x.area)
+    taken = g if taken is None else taken.union(g)
+    cand.append((nm, ph, g))
+cand1 = [g for nm, ph, g in cand if ph == 1]; cand2 = [g for nm, ph, g in cand if ph == 2]
+CNAMES = {id(g): nm for nm, ph, g in cand}
+allspots1 = [p for p, _ in sp1] + [p for p, _ in pt1_tour + pt1_lodge]
+allspots2 = [p for p, _ in sp2] + [p for p, _ in pt2_tour + pt2_lodge]
+TN = [(Point(*map(float, to_m(r[1], r[0]))), r[4]) for r in TRS if r[3] == 4 and r[0]]
+def describe(g, spts):
+    gb = g.buffer(30)
+    st = [k for k, q in STATIONS.items() if gb.contains(q)]
+    return dict(area=g.area / 1e6, spots=sum(gb.contains(p) for p in spts), stations=st,
+                lodg=sum(g.contains(q) for q, _, _ in lodg), tour=[n for q, n in TN if g.contains(q)],
+                stops=sum(g.contains(Point(*b)) for b in Bp), cx=g.centroid.x, cy=g.centroid.y)
+C1 = [dict(describe(g, allspots1), geom=g, name=CNAMES[id(g)]) for g in cand1]; C2 = [dict(describe(g, allspots2), geom=g, name=CNAMES[id(g)]) for g in cand2]
+
+for c in C1 + C2:
+    lo, la = to_ll(c["cx"], c["cy"])
+    print("CAND", c["name"], round(c["area"], 3), c["spots"], c["stations"], c["lodg"], len(c["tour"]), c["stops"], round(float(la), 4), round(float(lo), 4), c["tour"][:6])
+uncovered = [k for k in ("S1", "S3", "S4") if not any(c["geom"].buffer(30).contains(STATIONS[k]) for c in C1)]
+print("UNCOVERED", uncovered, "spots in blocks", sum(c["spots"] for c in C1), "of", len(allspots1))
+json.dump([{k: v for k, v in c.items() if k != "geom"} for c in C1 + C2], open(os.path.join(OUT, "candidates.json"), "w"), ensure_ascii=False, indent=1)
+import pickle; pickle.dump(dict(C1=C1, C2=C2), open(os.path.join(OUT, "cand.pkl"), "wb"))
+
+# ---------- 후보지 위치도: 개관 1장 + 후보지별 확대 패널
+NUM = "①②③④⑤⑥⑦⑧⑨"
+def draw_cand(ax, c, i, lw=2.4, ls="-", col="#d7191c", label=True, fs=11):
+    g = c["geom"]
+    ax.fill(*g.exterior.xy, color=col, alpha=.10, lw=0, zorder=3)
+    ax.plot(*g.exterior.xy, color=col, lw=lw, ls=ls, zorder=6)
+    if label:
+        rp = g.representative_point()
+        ax.text(rp.x, rp.y, NUM[i], fontsize=fs, weight="bold", color=col, ha="center", va="center", zorder=9,
+                bbox=dict(boxstyle="circle,pad=.15", fc="white", ec=col, lw=1))
+def stations_on(ax, ms=10, fs=6.5):
+    for k, q in STATIONS.items():
+        ax.plot(q.x, q.y, marker="s", ms=ms, mfc="#f39c12", mec="#7a4a00", mew=1.1, zorder=8, clip_on=True)
+        ax.text(q.x, q.y, k, fontsize=fs, weight="bold", ha="center", va="center", zorder=9, clip_on=True)
+def spots_on(ax, pts, ms=3.6):
+    for p in pts:
+        ax.plot(p.x, p.y, "o", ms=ms, mfc="#1f4e8c", mec="white", mew=.5, zorder=7, clip_on=True)
+
+ALL = [(c, i, "-") for i, c in enumerate(C1)] + [(c, len(C1) + j, "--") for j, c in enumerate(C2)]
+fig, ax = plt.subplots(figsize=(8, 9.2), dpi=220)
+base(ax, (cx0, cx1), (cy0, cy1), bnd=False)
+for _, ln in phase1:
+    ax.plot(*ln.xy, color="#2c6fb7", lw=1.6, alpha=.55)
+for _, ln in phase2:
+    ax.plot(*ln.xy, color="#2c6fb7", lw=1.2, alpha=.45, ls=(0, (2, 1.5)))
+spots_on(ax, allspots1, 3.2)
+for c, i, ls in ALL:
+    draw_cand(ax, c, i, ls=ls, col="#d7191c" if ls == "-" else "#e67e22")
+stations_on(ax)
+scalebar(ax, cx0 + 200, cy0 + 200, 500)
+ax.legend(handles=[Patch(fc="#d7191c", alpha=.25, ec="#d7191c", lw=2, label="1단계 가상주차구역 후보지"),
+                   Patch(fc="#e67e22", alpha=.25, ec="#e67e22", lw=2, ls="--", label="2단계 후보지"),
+                   Line2D([], [], marker="o", ls="", mfc="#1f4e8c", mec="white", ms=5, label="가상주차구역(지점)"),
+                   Line2D([], [], marker="s", ls="", mfc="#f39c12", mec="#7a4a00", ms=8, label="MaaS 스테이션"),
+                   Line2D([], [], color="#2c6fb7", lw=2, alpha=.6, label="회랑")], loc="upper left", fontsize=7.5, framealpha=.95).set_zorder(20)
+ax.set_title("가상주차구역 후보지 위치도 (청초호·해안길)", fontsize=12, weight="bold")
+fig.tight_layout(); fig.savefig(os.path.join(OUT, "map_candidates.png")); plt.close(fig)
+
+n = len(ALL); cols = 2; rows = (n + 1) // 2
+fig, axs = plt.subplots(rows, cols, figsize=(8.2, 3.3 * rows), dpi=200)
+for (c, i, ls), ax in zip(ALL, axs.flat):
+    g = c["geom"]; b = g.bounds; w = max(b[2] - b[0], (b[3] - b[1]) * 1.4) / 2 + 220; h = w / 1.4
+    mx, my = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+    base(ax, (mx - w, mx + w), (my - h, my + h), bnd=False)
+    for _, ln in phase1 + phase2:
+        ax.plot(*ln.xy, color="#2c6fb7", lw=1.2, alpha=.45)
+    spots_on(ax, allspots1 + allspots2, 4)
+    draw_cand(ax, c, i, lw=2.6, ls=ls, col="#d7191c" if ls == "-" else "#e67e22", label=False)
+    stations_on(ax, 11, 7)
+    scalebar(ax, mx - w + 60, my - h + 60, 200)
+    stx = ", ".join(c["stations"]) if c["stations"] else "-"
+    ax.set_title(f"{NUM[i]} {c['name']}" + (" (2단계)" if ls == "--" else ""), fontsize=9.5, weight="bold", loc="left")
+    ax.set_xlabel(f"(면적) {c['area']:.2f}㎢ / (가상주차구역) {c['spots']}개소 / (스테이션) {stx}", fontsize=8.2)
+for ax in list(axs.flat)[n:]:
+    ax.axis("off")
+fig.tight_layout(); fig.savefig(os.path.join(OUT, "map_candidates_panels.png")); plt.close(fig)
+json.dump([{**{k: v for k, v in c.items() if k != "geom"}} for c in C1 + C2], open(os.path.join(OUT, "candidates.json"), "w"), ensure_ascii=False, indent=1)
