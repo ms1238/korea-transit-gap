@@ -94,6 +94,15 @@ const GLOSSARY = [
 
 let S, P, C, units = [], beam = {}, sortS = { k: 'pop', asc: false }, sortR = { k: 'sido', asc: true }, shownS = [], shownR = [];
 
+// embedded under a Korean table (index.html): ?embed=status|reg|both&sido=<code> shows just that table, filtered to the
+// province, and tells the page its height
+const QS = new URLSearchParams(location.search), EMBED = QS.get('embed');
+if (EMBED) {
+  document.body.classList.add('embed');
+  if (EMBED === 'status') $('sec-reg').hidden = true;
+  if (EMBED === 'reg') $('sec-status').hidden = true;
+}
+const tellHeight = () => { if (EMBED && window.parent !== window) window.parent.postMessage({ enHeight: document.documentElement.scrollHeight }, location.origin); };
 async function main() {
   const [stats, pm, bm] = await Promise.all([fetch(dv('data/stats.json')).then(r => r.json()), fetch(dv('data/pm.json')).then(r => r.ok ? r.json() : {}).catch(() => ({})),
     fetch(dv('data/beam.geojson')).then(r => r.ok ? r.json() : null).catch(() => null)]);
@@ -103,6 +112,7 @@ async function main() {
   const sidos = [...new Map(units.map(u => [u.sido, u.sidonm])).entries()].sort((a, b) => a[0].localeCompare(b[0]));
   for (const [c, n] of sidos) $('sido').add(new Option(`${SIDO_EN[n] || n} (${n})`, c));
   $('sido').onchange = render; $('q').oninput = render;
+  if (QS.get('sido')) $('sido').value = QS.get('sido');
   $('asof').textContent = `Population ${S.meta.pop_ym.slice(0, 4)}-${S.meta.pop_ym.slice(4)}; shared service status as of end-${(S.meta.pm_ops_date || '').slice(0, 4)}; device and parking figures have different dates per area (shown in the table).`;
   $('glossary').innerHTML = GLOSSARY.map(([t, d]) => `<dt>${esc(t)}</dt><dd>${esc(d)}</dd>`).join('');
   render();
@@ -214,6 +224,7 @@ function render() {
   const tows = data.filter(u => u.tow), fees = tows.map(u => u.fee).filter(Boolean).sort((a, b) => a - b);
   $('note-reg').textContent = `${tows.length} of ${data.length} municipalities tow PMs` + (fees.length ? ` (fee KRW ${num(fees[0])}–${num(fees[fees.length - 1])}, median ${num(fees[Math.floor(fees.length / 2)])})` : '') +
     ` · designated parking system in ${data.filter(u => u.dpark).length} · E-scooter Free Zones in ${data.filter(u => u.nokick).length}. Where a towing practice table exists it overrides the ordinance for towing, fee and grace period.`;
+  tellHeight();
 }
 function csv(name, cols, rows) {
   const strip = s => String(s ?? '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
