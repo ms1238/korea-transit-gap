@@ -188,9 +188,10 @@ def scalebar(ax, x, y, L=1000):
     ax.plot([x, x + L], [y, y], color="k", lw=2.5); ax.text(x + L / 2, y + 90, f"{L/1000:g}km", ha="center", fontsize=8)
 
 # Figure 1: city-wide coverage
-fig, ax = plt.subplots(figsize=(8, 5.9), dpi=200)
+fig, ax = plt.subplots(figsize=(8, 7.6), dpi=200)
 bx = cityM.bounds
-base(ax, (bx[0] - 300, bx[2] + 1200), (bx[1] - 300, bx[3] + 300))
+zx0, zy0 = to_m(128.545, 38.163); zx1, zy1 = to_m(128.625, 38.236)
+base(ax, (float(zx0), float(zx1)), (float(zy0), float(zy1)))
 fillg(ax, c12["pm10"]["geom"], color="#f2a93b", alpha=0.18, lw=0)
 fillg(ax, c1["pm10"]["geom"], color="#e8702a", alpha=0.22, lw=0)
 fillg(ax, c1["walk"]["geom"], color="#c0392b", alpha=0.35, lw=0)
@@ -204,11 +205,11 @@ for _, ln in phase2:
     ax.plot(*ln.xy, color="#8e1b10", lw=1.6, ls=(0, (2, 1.5)))
 for nm, g in dongs:
     c = M(g).representative_point() if nm not in ("대포동", "노학동") else None
-    if nm == "대포동": c = Point(*map(float, to_m(128.47, 38.145)))
-    if nm == "노학동": c = Point(*map(float, to_m(128.52, 38.19)))
-    ax.text(c.x, c.y, nm, fontsize=7, color="#333", ha="center", alpha=.85)
-ax.text(*map(float, to_m(128.455, 38.126)), "설악산 국립공원 일대\n(산림)", fontsize=8, color="#3d6b35", ha="center")
-scalebar(ax, bx[0] + 300, bx[1] + 300, 2000)
+    if nm == "대포동": c = Point(*map(float, to_m(128.592, 38.170)))
+    if nm == "노학동": c = Point(*map(float, to_m(128.560, 38.197)))
+    ax.text(c.x, c.y, nm, fontsize=8, color="#333", ha="center", alpha=.85, clip_on=True)
+ax.text(*map(float, to_m(128.5465, 38.180)), "← 서쪽: 설악산 국립공원 일대(산림)\n시 면적의 71%, PM 대상 아님", fontsize=7.5, color="#3d6b35", ha="left")
+scalebar(ax, float(zx0) + 300, float(zy0) + 300, 1000)
 ax.legend(handles=[Patch(color="#c0392b", alpha=.5, label=f"도보 5분권 (가상주차 회랑 ±{WALK}m)"),
                    Patch(color="#e8702a", alpha=.4, label=f"1단계 PM 10분권 (±{PM10/1000:.2f}km)"),
                    Patch(color="#f2a93b", alpha=.3, label="2단계 확대 시 PM 10분권"),
@@ -216,7 +217,7 @@ ax.legend(handles=[Patch(color="#c0392b", alpha=.5, label=f"도보 5분권 (가�
                    Line2D([], [], color="#8e1b10", lw=1.6, ls=":", label="2단계 회랑"),
                    Patch(color="#9a9a9a", label="시가지(건물지, WorldCover)"),
                    Patch(color="#cfe3c4", label="산림")], loc="upper left", fontsize=7.5, frameon=True)
-ax.set_title("속초시 가상주차 회랑 기반 도보·PM 10분권", fontsize=12, weight="bold")
+ax.set_title("속초 동부 시가지: 가상주차 회랑 기반 도보·PM 10분권", fontsize=12, weight="bold")
 fig.tight_layout(); fig.savefig(os.path.join(OUT, "map_coverage.png")); plt.close(fig)
 
 # Figure 2: concept map of the pilot corridor
