@@ -1,0 +1,28 @@
+name: Probe sources (temporary)
+
+on:
+  push:
+    paths: ["probe/**", ".github/workflows/probe.yml"]
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - uses: actions/cache/restore@v4
+        with:
+          path: raw
+          key: raw-probe-${{ github.run_id }}
+          restore-keys: raw-
+      - run: python scripts/build.py > build.log 2>&1; tail -3 build.log; grep -n "stop data gaps\|stops:" build.log
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cd probe && npm init -y >/dev/null && npm i playwright@1.49.1 >/dev/null && npx playwright install --with-deps chromium >/dev/null
+      - run: (cd site && python -m http.server 8765 >/dev/null 2>&1 &) && sleep 2 && node probe/check.js
+      - run: python probe/sokcho.py
