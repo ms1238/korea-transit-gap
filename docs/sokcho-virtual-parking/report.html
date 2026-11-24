@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>속초형 가변가상주차제 구상</title>
+<style>
+@page { size: A4; margin: 16mm 15mm 16mm 15mm; }
+:root { --navy:#1f3a68; --ink:#1a1a1a; --sub:#555; --line:#9aa3b5; --bg:#fff; --head:#e9edf5; }
+body { font-family:"Noto Sans KR",sans-serif; color:var(--ink); background:var(--bg); font-size:10.3pt; line-height:1.62; margin:0; }
+.wrap { max-width:180mm; margin:0 auto; }
+h1 { text-align:center; font-size:19pt; margin:0; padding:6px 0 4px; border-top:1.5px solid #000; }
+.titlebar { height:6px; background:var(--navy); margin:0 0 2px; }
+.date { text-align:right; font-size:8.5pt; color:var(--sub); margin-bottom:12px; }
+.sub { text-align:center; font-size:11pt; color:var(--navy); font-weight:700; margin:2px 0 8px; }
+.summary { border:1.5px solid var(--navy); padding:8px 12px; margin:6px 0 14px; background:#f5f7fb; }
+.summary b.k { color:var(--navy); }
+h2 { font-size:13pt; margin:20px 0 8px; display:flex; align-items:center; gap:8px; border-bottom:1.5px solid var(--navy); padding-bottom:3px; break-after:avoid; }
+h2 .n { background:var(--navy); color:#fff; font-size:11pt; width:24px; height:24px; display:inline-flex; align-items:center; justify-content:center; }
+p { margin:4px 0; }
+.sq { padding-left:1.25em; text-indent:-1.25em; margin:7px 0 3px; }
+.sq::before { content:"□ "; }
+.o { padding-left:2.4em; text-indent:-1.1em; margin:2px 0; }
+.o::before { content:"ㅇ "; }
+.d { padding-left:3.4em; text-indent:-0.9em; margin:1px 0; font-size:9.6pt; color:#333; }
+.d::before { content:"- "; }
+table { width:100%; border-collapse:collapse; margin:6px 0 4px; font-size:8.9pt; line-height:1.45; break-inside:avoid; }
+th, td { border:1px solid #555; padding:3px 5px; vertical-align:middle; }
+th { background:var(--head); font-weight:700; text-align:center; }
+td.c { text-align:center; } td.r { text-align:right; }
+.cap { text-align:center; font-size:9pt; margin:10px 0 2px; }
+.note { font-size:8.2pt; color:var(--sub); margin:2px 0 6px; line-height:1.45; }
+figure { margin:6px 0; text-align:center; break-inside:avoid; }
+figure img { width:100%; border:1px solid #bbb; }
+.hl { background:#fff3c4; }
+.tag { display:inline-block; font-size:8pt; padding:0 5px; border-radius:3px; color:#fff; }
+.A { background:#d64534; } .B { background:#1f4e8c; } .C { background:#888; }
+.pb { break-before:page; }
+.concl { break-inside:avoid; border:2px solid var(--navy); padding:8px 12px; margin-top:8px; }
+@media screen { body { background:#eef0f4; } .wrap { background:#fff; padding:18mm 15mm; margin:16px auto; box-shadow:0 1px 6px rgba(0,0,0,.15); } }
+@media screen and (max-width:700px){ .wrap{ padding:16px; } }
+</style>
+</head>
+<body><div class="wrap">
+
+<h1>속초형 관광 MaaS 연계 가변가상주차제 도입 구상(안)</h1>
+<div class="titlebar"></div>
+<div class="sub">― 청초호·해안길 시범구역 중심, 관광·상권 밀집지역 한정 적용 ―</div>
+<div class="date">26.11.24.</div>
+
+<div class="summary">
+<p><b class="k">핵심 제안</b> 「속초형 MaaS 관광 라스트마일 스테이션」(물리 거점)에 <b>가상주차구역(앱 상 반납 거점)</b>을 결합해, 관광객이 많고 민원 위험이 큰 <b>청초호·해안길 회랑에 한정</b>하여 “지정된 곳에서만 반납”하는 주차질서를 먼저 확보</p>
+<p><b class="k">PM 활용 범위</b> 1단계 회랑(8.8km) 기준 <b>PM 10분권이 속초 시가지(건물지)의 60%</b>를 포괄(2단계 확대 시 67%). 시 전체 면적 대비로는 12.5%에 그치나, 이는 산림이 71%를 차지하는 지형 때문</p>
+<p><b class="k">맹점과 대응</b> 공유 킥보드 약 100대 수준으로 킥보드 단독 실증은 표본이 부족 → <b>공유자전거를 포함</b>하고, 해안 자전거길 <b>레저 수요</b>를 1차 타깃으로 설계</p>
+</div>
+
+<h2><span class="n">1</span>제안 배경</h2>
+<p class="sq">교수님 구상(「속초형 MaaS 기반 관광 라스트마일 스테이션 구축 및 서비스 실증」)은 광역교통 거점–스테이션–관광지를 공유자전거·PM으로 연결하여 <b>이동 자체를 관광상품화</b>하는 모델</p>
+<p class="o">1단계로 고속버스터미널–속초해수욕장–청초호 구간 실증, 2단계로 아바이마을·중앙시장·영랑호 확대 제안</p>
+<p class="sq">다만 <b>스테이션만 조성하고 반납을 자유롭게 두면</b>, 관광객 밀집 구간에 기기가 무질서하게 방치되어 보행 불편 민원 → PM 부정 인식 → 사업 지속성 훼손으로 이어질 우려</p>
+<p class="o">관광지는 보행 밀도가 높고 이용자 대부분이 단기 방문객이라 지역 주차 규칙을 모름 → <b>현장에서 즉시 행동을 교정</b>하는 장치가 필요</p>
+<p class="sq">가변가상주차제는 지오펜싱·GPS와 운영사 앱을 활용해 <b>지정된 가상 주차구역에서만 반납</b>되도록 하는 방식으로, 물리 시설 없이 주차질서 확보 가능</p>
+<p class="o">(대구 달성군) 테크노폴리스 시행 후 평균 주차 준수율 약 85% / (수원 영통) 무단주차 184대 → 9대 / (서울 강남) 첫 3주 PM 민원 61.3% 감소 <span class="note">※ 빔모빌리티코리아, 「가변가상주차제 관련」(26.11.13.)</span></p>
+<p class="sq"><b>다만 시 전역 적용은 현실적이지 않음</b> → 민원·유동인구가 집중되는 <b>관광지·상업지구에 한정</b>하고, 그 외 지역은 기존 반납 방식(금지구역만 설정)을 유지하는 <b>구역 한정형</b>으로 제안</p>
+
+<h2><span class="n">2</span>속초시 여건 진단</h2>
+<table>
+<tr><th style="width:20%">구분</th><th style="width:36%">현황</th><th>시사점</th></tr>
+<tr><td class="c">토지 구성</td><td>행정구역 106.8㎢ 중 산림 75.7㎢(70.9%), 시가지(건물지) 12.3㎢(11.5%)</td><td>PM이 실제 쓰일 공간은 동측 해안 시가지에 집중 → 시 전체 면적은 의미 있는 분모가 아님</td></tr>
+<tr><td class="c">도시계획</td><td>도시지역 42.1㎢(주거 6.3㎢·상업 2.3㎢), 인구 79,636명('25)</td><td>상업지역이 작고 집약적 → 가상주차 시범구역 설정에 유리</td></tr>
+<tr><td class="c">공유 킥보드</td><td class="hl">약 100대('26.7월 기준)</td><td>킥보드 단독으로는 실증 표본·이용 밀도 부족</td></tr>
+<tr><td class="c">공유자전거</td><td>'24년 말 민영 공유자전거 운영 확인. 운영사·대수는 <b>추가 확인 필요</b></td><td>자전거 포함 시 표본 확보 가능. 운영사 참여 의사 확인이 선결과제</td></tr>
+<tr><td class="c">이용 실적</td><td>'24년 말 공유PM 앱 기반 이용 실적이 전국 최상위 지역의 약 0.2% 수준</td><td>PM 이용 문화 형성 전 단계 → 지금 규칙을 정하는 것이 사후 규제보다 저비용</td></tr>
+<tr><td class="c">자치법규</td><td>「속초시 개인형 이동장치 이용안전 증진 조례」 有, 조례상 이동조치 규정 無, 견인료(PM) 2만원</td><td>무단주차 대응 수단이 견인 위주 → 가상주차제로 사전 예방 보완</td></tr>
+<tr><td class="c">자전거 인프라</td><td>청호동~속초해수욕장 해안 자전거도로 연속 구간(현장 확인)</td><td>레저형 자전거 수요 존재. 단, 해안측 보도 협소</td></tr>
+</table>
+<p class="note">출처: 토지 구성 – ESA WorldCover 2021(10m) 및 행정동 경계(vuski/admdongkor, ver20261001)로 작성자 산출 / 도시계획 – 국토부 도시계획현황(UPIS) 2025 / 공유자전거·이용 실적 – 국토교통부 「2025년 첨단모빌리티 현황조사」('24년 말 기준, 이용 횟수는 기간 단위 미표기로 지역 간 상대 비교만 유효) / 킥보드 대수 – 작성자 파악 수치 / 조례 – 자치법규정보시스템 조사</p>
+
+<p class="sq"><b>속초의 맹점: 기기 100대</b></p>
+<p class="o">PM 10분권 시가지(7.4㎢) 기준 기기 밀도 약 <b>13.5대/㎢</b>. 비교: 부산 수영구(광안리 해변 관광권) 849대/10.7㎢ ≈ <b>79대/㎢</b>('25.11) → 속초는 약 1/6 수준</p>
+<p class="o">밀도가 낮으면 이용자가 근처에서 기기를 찾기 어렵고 운영사의 구역 설정 투자 유인도 낮음 → 킥보드만으로는 실증 효과 검증이 곤란</p>
+<p class="o"><b>대응</b>: ① 공유자전거(전기자전거 포함)를 대상에 포함 ② 해안 자전거길 레저 수요를 1차 타깃 ③ 성수기(7~8월) 한시 증차를 운영사 참여 조건으로 협의</p>
+
+<h2><span class="n">3</span>PM 활용 가능 범위 분석 (도보권 + PM 10분권)</h2>
+<p class="sq">분석 방법: 1단계 가상주차 회랑(해안길·청초호 둘레·엑스포공원–터미널, 총 8.8km)에서 도보·PM으로 도달 가능한 범위를 산출하여 시 면적·시가지 면적 대비 비중 계산</p>
+<table>
+<tr><th>구분</th><th>이동 가정</th><th>직선 환산 반경</th></tr>
+<tr><td class="c">도보 5분권</td><td>보행 80m/분 × 5분 = 400m, 우회계수 1.3</td><td class="c">300m</td></tr>
+<tr><td class="c">PM 5분권</td><td rowspan="2">PM 평균 12km/h(신호·감속 포함, 법정 최고속도 25km/h의 약 절반), 우회계수 1.3</td><td class="c">770m</td></tr>
+<tr><td class="c">PM 10분권</td><td class="c">1.54km</td></tr>
+</table>
+
+<figure><img src="map_coverage.png" alt="속초시 가상주차 회랑 기반 도보·PM 10분권 지도"></figure>
+
+<p class="cap">&lt;회랑 기반 도달권 면적 비중&gt;</p>
+<table>
+<tr><th rowspan="2">구분</th><th colspan="3">1단계 (청초호·해안길 8.8km)</th><th colspan="3">2단계 (+동명항·영랑호, 누적 18.5km)</th></tr>
+<tr><th>면적</th><th>시 면적 대비</th><th>시가지 대비</th><th>면적</th><th>시 면적 대비</th><th>시가지 대비</th></tr>
+<tr><td class="c">도보 5분권</td><td class="r">3.2㎢</td><td class="r">3.0%</td><td class="r">16.4%</td><td class="r">7.0㎢</td><td class="r">6.5%</td><td class="r">26.2%</td></tr>
+<tr><td class="c">PM 5분권</td><td class="r">6.6㎢</td><td class="r">6.2%</td><td class="r">36.9%</td><td class="r">12.2㎢</td><td class="r">11.4%</td><td class="r">51.1%</td></tr>
+<tr class="hl"><td class="c"><b>PM 10분권</b></td><td class="r">13.4㎢</td><td class="r">12.5%</td><td class="r"><b>60.4%</b></td><td class="r">18.7㎢</td><td class="r">17.5%</td><td class="r"><b>66.9%</b></td></tr>
+</table>
+<p class="note">시 면적 106.8㎢, 시가지(WorldCover 건물지) 12.3㎢ 기준. 인구 분포 자료 대신 건물지 면적을 대리지표로 사용</p>
+
+<p class="cap">&lt;행정동별 시가지의 PM 10분권 포함 비율&gt;</p>
+<table>
+<tr><th>행정동</th><th>면적</th><th>시가지</th><th>도보 5분권(1단계)</th><th>PM 10분권(1단계)</th><th>PM 10분권(2단계)</th><th>비고</th></tr>
+<tr><td class="c">청호동</td><td class="r">1.6㎢</td><td class="r">0.84㎢</td><td class="r">89%</td><td class="r">100%</td><td class="r">100%</td><td>아바이마을·해안길</td></tr>
+<tr><td class="c">교동</td><td class="r">0.8㎢</td><td class="r">0.73㎢</td><td class="r">33%</td><td class="r">100%</td><td class="r">100%</td><td></td></tr>
+<tr><td class="c">동명동</td><td class="r">0.8㎢</td><td class="r">0.62㎢</td><td class="r">3%</td><td class="r">100%</td><td class="r">100%</td><td>동명항·영금정</td></tr>
+<tr><td class="c">조양동</td><td class="r">5.7㎢</td><td class="r">1.92㎢</td><td class="r">26%</td><td class="r">98%</td><td class="r">98%</td><td>터미널·해수욕장·엑스포공원</td></tr>
+<tr><td class="c">금호동</td><td class="r">1.4㎢</td><td class="r">0.69㎢</td><td class="r">38%</td><td class="r">97%</td><td class="r">100%</td><td>중앙시장 일대</td></tr>
+<tr><td class="c">노학동</td><td class="r">20.4㎢</td><td class="r">3.69㎢</td><td class="r">4%</td><td class="r">41%</td><td class="r">45%</td><td>서부 주거지, 시가지 최대</td></tr>
+<tr><td class="c">영랑동</td><td class="r">7.8㎢</td><td class="r">1.39㎢</td><td class="r">0%</td><td class="r">32%</td><td class="r">78%</td><td>2단계 효과 최대</td></tr>
+<tr><td class="c">대포동</td><td class="r">68.3㎢</td><td class="r">2.39㎢</td><td class="r">4%</td><td class="r">30%</td><td class="r">30%</td><td>대포항·설악동, 산림 대부분</td></tr>
+</table>
+
+<p class="sq" style="break-before:page"><b>해석</b></p>
+<p class="o"><b>관광 회랑 하나로 시가지 10곳 중 6곳이 PM 10분권</b>에 들어옴 → 속초에서 PM은 “시 전역 교통수단”이 아니라 <b>도심–해안 관광권역의 라스트마일 수단</b>으로 활용 가능성이 높음</p>
+<p class="o">도보 5분권(반납 지점 접근 가능 범위)은 시가지의 16%로 의도적으로 좁음 → 가상주차구역은 관광·상권에 집중하고, 회랑 밖 목적지는 <b>“회랑에서 출발하여 PM으로 10분”</b> 구조로 연결</p>
+<p class="o">사각지대는 노학동(서부 주거지)·대포동(대포항·설악동)·영랑동. 영랑동은 2단계(영랑호)에서 32%→78%로 개선되나, 노학동·대포동은 관광 회랑으로 해결되지 않으며 <b>주민 생활 수요는 별도 과제</b></p>
+<p class="o">분석 한계: 직선거리 기반(실제 도로망·경사 미반영), 인구 대신 건물지 면적 사용. 실증 전 도로망 기반 재산출 필요</p>
+
+<h2><span class="n">4</span>가상주차제 설계 기준</h2>
+<p class="sq"><b>적용 원칙</b>: 시범구역 내부는 지정 가상주차구역에서만 반납 허용, 외부는 기존 반납 방식 유지(금지구역만 설정)</p>
+<p class="cap">&lt;구역 등급별 지정 간격&gt;</p>
+<table>
+<tr><th style="width:16%">등급</th><th style="width:30%">대상</th><th style="width:14%">간격</th><th>지정 방식</th></tr>
+<tr><td class="c"><span class="tag A">A</span> 핵심 관광·상권</td><td>고속버스터미널·속초해수욕장, 아바이마을·갯배, 중앙시장, 엑스포공원 (각 반경 350m)</td><td class="c"><b>50~100m</b></td><td>MaaS 스테이션 + 보도형·주차면 전환형. 보행 밀도가 높아 도보 1분 내 반납 가능하도록 촘촘하게</td></tr>
+<tr><td class="c"><span class="tag B">B</span> 레저 회랑</td><td>청호동 해안 자전거길, 청초호 둘레</td><td class="c"><b>150~200m</b></td><td>해안측 보도 협소 → 주차면 전환형·빗금구역형 우선. 보도폭이 넓은 구간만 보도형</td></tr>
+<tr><td class="c"><span class="tag C">C</span> 일반</td><td>그 외 시가지</td><td class="c">지정 없음</td><td>기존 반납 방식 + 반납 금지구역(횡단보도·버스정류장 등)만 설정</td></tr>
+</table>
+
+<p class="cap">&lt;가상주차구역 지정 유형&gt;</p>
+<table>
+<tr><th style="width:15%">유형</th><th style="width:34%">적용 공간</th><th style="width:17%">수용(추정)</th><th>협의·유의사항</th></tr>
+<tr><td class="c">① 보도형</td><td>보도폭이 넓은 구간의 지장물(가로등·가로수·볼라드 등) 사이 유휴공간</td><td class="c">3~5대</td><td>설치 후 잔여 보도 유효폭 2.0m 이상 확보(「도로의 구조·시설 기준에 관한 규칙」 보도 유효폭 기준 준용)</td></tr>
+<tr><td class="c">② 주차면 전환형</td><td>노상·노외 공영주차장의 차량 주차면 1면을 PM·자전거 주차구역으로 전환</td><td class="c">킥보드 8~10대<br>또는 자전거 5~6대</td><td>주차면 감소에 따른 상인 반발 → 차량 1면 대비 회전율·방문객 수 논리로 설득. 시 주차관리 부서 협의</td></tr>
+<tr><td class="c">③ 빗금구역형</td><td>차량 주정차를 막기 위해 빗금 노면표시를 해 둔 구역(현장사진 2)</td><td class="c">구역 길이에 비례</td><td>노면표시는 교통안전시설로 <b>경찰 협의 필수</b>. 횡단보도 인접부는 시야 확보 목적이므로 횡단보도 3m 이내 제외</td></tr>
+<tr><td class="c">④ 스테이션형</td><td>MaaS 스테이션 내 거치·충전 공간</td><td class="c">10~20대</td><td>스테이션 조성과 동시 지정. 가상주차와 물리 거치대 병행</td></tr>
+</table>
+<p class="note">수용 대수는 표준 주차면(2.5m×5.0m)에 킥보드(약 0.6m×1.2m)·자전거(약 0.6m×1.8m)를 배치한 작성자 추정치로, 현장 실측 후 확정 필요</p>
+<p class="sq"><b>지정 금지 기준</b>(지자체 가이드라인 예시): 횡단보도 3m 이내, 버스정류장, 점자블록 위, 소화전 주변, 건물·상가 출입구 전면, 잔여 보도 유효폭 2.0m 미확보 구간</p>
+
+<h2><span class="n">5</span>청초호·해안길 가상주차제 구상도</h2>
+<figure><img style="width:82%" src="map_concept.png" alt="청초호·해안길 가상주차제 구상도"></figure>
+<p class="note">개략도: 회랑은 위성 토지피복 자료로 추출한 해안선·호안선 기준이며, 구역 위치는 지정 간격 규칙을 적용한 예시. 실제 지점은 현장 조사(보도폭·지장물·주차면)로 확정</p>
+
+<p class="cap">&lt;구간별 가상주차구역 배치(안)&gt;</p>
+<table>
+<tr><th>단계</th><th>구간</th><th>연장</th><th>등급</th><th>구역 수(A/B)</th><th>주 지정 유형</th></tr>
+<tr><td class="c" rowspan="3">1단계</td><td>속초해수욕장–청호동 해안길–아바이마을</td><td class="r">2.4km</td><td class="c">A·B</td><td class="c">21 (12/9)</td><td>해수욕장·아바이 구간 A(보도형·주차면 전환), 해안길 B(빗금구역·주차면 전환)</td></tr>
+<tr><td>청초호 둘레(엑스포공원·갯배 포함)</td><td class="r">5.2km</td><td class="c">A·B</td><td class="c">43 (22/21)</td><td>엑스포공원·중앙시장 측 A, 서측 호안 B(보도형)</td></tr>
+<tr><td>엑스포공원–고속버스터미널 연결</td><td class="r">1.2km</td><td class="c">A</td><td class="c">14 (12/2)</td><td>터미널 모빌리티 허브(스테이션형)</td></tr>
+<tr><td class="c" colspan="2"><b>1단계 계(중복 제거)</b></td><td class="r"><b>8.8km</b></td><td></td><td class="c"><b>73 (42/31)</b></td><td>도보 5분권 3.2㎢ 기준 약 23개/㎢</td></tr>
+<tr><td class="c" rowspan="2">2단계</td><td>설악대교 북측–동명항–영금정</td><td class="r">2.3km</td><td class="c">B</td><td class="c">15</td><td>항구·관광지 주차장 면 전환</td></tr>
+<tr><td>영랑호 둘레</td><td class="r">7.4km</td><td class="c">B</td><td class="c">42</td><td>호안 산책로 보도형</td></tr>
+</table>
+<p class="o">1단계 73개는 빔모빌리티 자료가 인용한 적정 밀도(1㎢당 20~30개)의 범위 안. 기기 100대 대비 구역이 많아 보이나, 가상주차구역은 비용이 들지 않으며 <b>반납 지점까지의 거리가 준수율을 좌우</b>하므로 밀도를 낮추지 않는 것이 맞음</p>
+<p class="o">운영 초기에는 A등급 42개를 우선 활성화하고, B등급은 이용 데이터를 보고 단계적으로 활성화하는 방식도 가능(<b>“가변”</b> 운영)</p>
+
+<h2><span class="n">6</span>MaaS 스테이션과의 연계</h2>
+<table>
+<tr><th style="width:9%">번호</th><th style="width:25%">위치</th><th style="width:22%">스테이션 유형(교수님안)</th><th>가상주차 연계 기능</th></tr>
+<tr><td class="c">S1</td><td>고속버스터미널 인근</td><td>A. 모빌리티 허브</td><td>광역교통 하차 → 대여 출발점. 가장 큰 반납 거점, 성수기 재배치 기지</td></tr>
+<tr><td class="c">S2</td><td>청호해변(해안 자전거길 중간)</td><td>B. 휴식 스테이션</td><td>레저 라이딩 중간 반납·휴식. 해안측 보도 협소 구간을 스테이션 부지로 해소</td></tr>
+<tr><td class="c">S3</td><td>엑스포공원·엑스포타워</td><td>C. 포토 스테이션</td><td>청초호 둘레 라이딩 시작·종료점. 포토존 방문 인증과 반납 인센티브 결합</td></tr>
+<tr><td class="c">S4</td><td>갯배 선착장·중앙시장 일대</td><td>D. 로컬 스테이션</td><td>상권 진입 전 반납 유도 → 시장 골목 내 기기 진입 차단, 쿠폰·스탬프 연계</td></tr>
+</table>
+<p class="sq">스테이션은 “가고 싶은 장소”, 가상주차구역은 “반납 질서”를 담당 → 지정 구역 반납 시 스탬프·할인 등 <b>보상형 인센티브</b>를 MaaS 앱에서 제공하면 규제가 아닌 관광 경험으로 인식</p>
+
+<h2><span class="n">7</span>운영체계 및 역할</h2>
+<table>
+<tr><th style="width:15%">주체</th><th style="width:30%">역할</th><th>세부 내용</th></tr>
+<tr><td class="c">속초시</td><td>기준 수립·점검</td><td>가상주차구역 지정 가이드라인 마련, 운영사 제안 구역 검토·확정, 반복 민원 지점 시정 권고, 주차면 전환·노면표시 관련 부서 간 조정</td></tr>
+<tr><td class="c">운영사<br>(킥보드·자전거 전체)</td><td>구역 설정·운영 관리</td><td>가이드라인에 따른 구역 제안·지오펜스 설정, 구역 외 반납 차단 및 앱 안내, 성수기 증차·재배치, 데이터 공유</td></tr>
+<tr><td class="c">경찰서</td><td>교통안전 협의</td><td>빗금구역·노면표시 활용 및 횡단보도 인접부 협의</td></tr>
+<tr><td class="c">상인회·주민</td><td>입지 의견 제시</td><td>주차면 전환 위치 협의, 상가 출입구 회피 요청, 민원 모니터링</td></tr>
+</table>
+<p class="sq"><b>관내 모든 대여업체(킥보드·자전거) 동시 참여가 전제</b> → 일부 업체만 참여하면 해당 업체만 이용 불편·매출 손실을 떠안고, 거리의 무질서는 개선되지 않음</p>
+<p class="sq"><b>“가변” 운영</b>: 해수욕장 성수기(7~8월)·축제·해맞이 등 행사 시 A등급 구역 확대·간격 축소, 비수기에는 B등급 일부 비활성화. 물리 시설이 없으므로 앱 설정만으로 조정 가능</p>
+
+<h2><span class="n">8</span>단계별 추진 및 성과지표</h2>
+<table>
+<tr><th style="width:14%">단계</th><th style="width:38%">내용</th><th>성과지표(안)</th></tr>
+<tr><td class="c">준비</td><td>현장 조사(보도폭·지장물·주차면·빗금구역), 운영사 참여 협약, 경찰 협의, 가이드라인 확정</td><td>시범구역 확정, 참여 운영사 수(킥보드+자전거 전체)</td></tr>
+<tr><td class="c">1단계<br>성수기 실증</td><td>청초호·해안길 73개 구역 + 스테이션 S1~S4. 7~8월 성수기 집중 운영</td><td>지정구역 반납 준수율 85% 이상(대구 달성 사례 수준), 시범구역 PM 민원 전년 대비 감소율, 스테이션 이용률, 회랑 이용 건수</td></tr>
+<tr><td class="c">2단계</td><td>동명항·영금정·영랑호 확대(+57개)</td><td>시가지 PM 10분권 67% 달성, 신규 방문지 수·체류시간</td></tr>
+<tr><td class="c">3단계</td><td>고성·양양 등 동해안 관광권 확산(교수님안)</td><td>광역 MaaS 연계 이용 건수</td></tr>
+</table>
+<p class="note">교수님안과 동일하게, 실증 참여자와 비교집단(비시범구역)의 주차 행태·민원 변화를 비교하여 가상주차제의 순수효과를 검증</p>
+
+<h2><span class="n">9</span>리스크 및 대응</h2>
+<table>
+<tr><th style="width:24%">리스크</th><th style="width:12%">수준</th><th>대응</th></tr>
+<tr><td>경찰의 제도화 반대(대구 규제샌드박스 사례)</td><td class="c">높음</td><td>법령 개정이 필요 없는 <b>운영사 자율 + 시 가이드라인</b> 방식으로 시작(강남구 사례). 빗금구역은 경찰 협의 지점만 선별</td></tr>
+<tr><td>기기 100대로 효과 미미</td><td class="c">높음</td><td>공유자전거 포함, 성수기 한시 증차를 참여 조건으로 협의, 성과는 준수율·민원 등 비율 지표 중심</td></tr>
+<tr><td>주차면 전환 시 상인 반발</td><td class="c">중간</td><td>상가 전면 회피, 공영주차장 끝면 우선 활용, 방문객 유입 데이터 공유</td></tr>
+<tr><td>일부 운영사만 참여</td><td class="c">중간</td><td>시가 주도하여 전 운영사 동시 협약, 미참여 시 시범구역 내 운영 제한 협의</td></tr>
+<tr><td>해안 GPS 오차·염분·강풍</td><td class="c">중간</td><td>구역 반경을 여유 있게 설정(관광지 GPS 오차 고려), 강풍 시 전도 방지형 위치(방풍벽 측) 우선</td></tr>
+<tr><td>계절 수요 편차</td><td class="c">중간</td><td>“가변” 운영으로 비수기 구역 축소, 성수기 재배치 계획 사전 수립</td></tr>
+</table>
+
+<h2><span class="n">10</span>결론 및 제안</h2>
+<div class="concl">
+<p class="sq"><b>스테이션(교수님안) + 가상주차구역(본 제안)을 한 세트로 제안</b>. 스테이션만으로는 반납 질서를 담보할 수 없고, 관광지에서 발생한 무단주차 민원은 사업 전체의 인식을 좌우함</p>
+<p class="sq"><b>적용 범위는 청초호·해안길 회랑 8.8km, 73개 구역으로 한정</b>. 관광·상권(A) 50~100m, 레저 회랑(B) 150~200m, 그 외 지역은 미적용</p>
+<p class="sq"><b>PM 활용 범위는 충분</b>: 이 회랑만으로 속초 시가지의 60%가 PM 10분권. 제약은 공간이 아니라 <b>기기 수(100대)</b>이므로 공유자전거 포함과 성수기 증차가 실증 성패를 결정</p>
+<p class="sq"><b>우선순위</b>: ① 공유자전거 운영사 참여 확인 → ② 현장 조사로 A등급 42개 지점 확정 → ③ 경찰 협의(빗금구역) → ④ '27년 7~8월 성수기 실증</p>
+</div>
+
+</div></body></html>
