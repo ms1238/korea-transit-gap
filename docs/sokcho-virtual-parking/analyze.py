@@ -65,29 +65,34 @@ P = lambda lat, lon: Point(*map(float, to_m(lon, lat)))
 # phase 1 = 고속버스터미널·속초해수욕장 → 청호동 해안길 → 아바이마을 + 청초호 둘레 + 엑스포공원~터미널 연결
 coast1 = coast(38.1850, 38.2040)
 lakeR = ring(cheongcho)
-term = P(38.1905, 128.5985)
-expo = Point(lakeR.interpolate(lakeR.project(P(38.1915, 128.5895))).coords[0])
-link = LineString([expo.coords[0], term.coords[0], coast1.interpolate(coast1.project(term)).coords[0]])
+term = P(38.19051, 128.59873)  # 속초고속버스터미널 (국토부 터미널 현황 좌표)
+expo = Point(lakeR.interpolate(lakeR.project(P(38.19162, 128.5831))).coords[0])  # 엑스포타워 (TourAPI)
+lk0 = Point(lakeR.interpolate(lakeR.project(P(38.1915, 128.5895))).coords[0])
+link = LineString([lk0.coords[0], term.coords[0], coast1.interpolate(coast1.project(term)).coords[0]])
 phase1 = [("청호동·속초해수욕장 해안길", coast1), ("청초호 둘레", lakeR), ("엑스포공원–고속버스터미널", link)]
 # phase 2 = 설악대교 북측 해안(속초항·동명항·영금정) → 영랑호 둘레
 coast2 = coast(38.2040, 38.2185)
 phase2 = [("동명항·영금정 해안길", coast2), ("영랑호 둘레", ring(yeongnang))]
 
-ZONES = {  # A등급 핵심 관광·상권 (반경 350m) — 위치는 개략
-    "고속버스터미널·속초해수욕장": P(38.1905, 128.6000),
-    "아바이마을·갯배": P(38.2030, 128.5960),
-    "중앙시장(관광수산시장)": P(38.2050, 128.5900),
-    "엑스포공원·엑스포타워": P(38.1925, 128.5895),
-}
-ZR = 350
-zoneU = shapely.union_all([p.buffer(ZR) for p in ZONES.values()])
+# --- 입지 점수(50m 격자): 반경 300m 내 영업 숙박시설 수(가중 0.4) + 관광지(TourAPI, 0.3) + 버스정류장(OSM, 0.3), 각 p95에서 상한
+gd = np.load(os.path.join(D, "grid.npz"))
+GX, GY = gd["X"], gd["Y"]; Lp, Tp, Bp = gd["Lp"], gd["Tp"], gd["Bp"]
+Bp = np.array([b for b in Bp if cityM.contains(Point(*b))])  # 속초시 경계 안 정류장만
+SC = 0.4 * np.minimum(gd["cL"] / 15, 1) + 0.3 * np.minimum(gd["cT"] / 4, 1) + 0.3 * np.minimum(gd["cB"] / 6, 1)
+GT = Affine(50, 0, GX[0, 0] - 25, 0, 50, GY[0, 0] - 25)
+def grade_poly(th):
+    return shapely.union_all([shape(g) for g, v in shapes((SC >= th).astype(np.uint8), mask=(SC >= th), transform=GT) if v == 1]).intersection(cityM)
+ZA, ZB = 0.6, 0.35
+zoneU = grade_poly(ZA).buffer(30).buffer(-30)
+zoneB = grade_poly(ZB)
+TER = {"고속버스터미널": P(38.19051, 128.59873), "시외버스터미널": P(38.21118, 128.59088)}
 
 def spots(lines):
     out = []
     for _, ln in lines:
         s = 0.0
         while s <= ln.length:
-            p = ln.interpolate(s); a = zoneU.contains(p); out.append((p, a))
+            p = ln.interpolate(s); a = zoneU.distance(p) <= 60; out.append((p, a))
             s += 75 if a else 175
     # drop near-duplicates where lines meet
     keep = []
@@ -97,6 +102,32 @@ def spots(lines):
     return keep
 
 sp1 = spots(phase1); sp2 = spots(phase2)
+
+# --- 숙박시설형·관광지형 거점: 회랑 도보권(300m) 안의 관광지와 호텔급 숙박시설 중, 100m 안에 회랑 구역이 없는 곳에 1개씩 추가
+LM = json.load(open(os.path.join(D, "lodging", "meta.json"))); LR = json.load(open(os.path.join(D, "lodging", "pts.json")))["rows"]
+TRS = json.load(open(os.path.join(D, "lodging", "tour.json")))
+HOTEL = {"관광호텔업", "가족호텔업", "소형호텔업", "호스텔업", "휴양콘도미니엄업", "일반호텔", "의료관광호텔업", "수상관광호텔업", "한국전통호텔업"}
+lodg = [(Point(*map(float, to_m(r[1], r[0]))), LM["types"][r[2]]["name"], r[9]) for r in LR if r[3] == 4 and r[6] == 0 and r[13] != 1 and r[0] and r[1]]
+tours = [(Point(*map(float, to_m(r[1], r[0]))), LM["tour"]["types"][r[2]], r[4]) for r in TRS if r[3] == 4 and r[0] and r[1]]
+def point_spots(lines, base_spots):
+    corr = shapely.union_all([ln for _, ln in lines]); have = [p for p, _ in base_spots]; tour_s, lodge_s = [], []
+    for pt, kind, nm in tours:
+        if corr.distance(pt) <= WALK and min(pt.distance(q) for q in have) > 100:
+            tour_s.append((pt, nm)); have.append(pt)
+    for pt, kind, nm in lodg:
+        if kind in HOTEL and corr.distance(pt) <= WALK and min(pt.distance(q) for q in have) > 100:
+            lodge_s.append((pt, nm)); have.append(pt)
+    return tour_s, lodge_s
+WALK = 300
+pt1_tour, pt1_lodge = point_spots(phase1, sp1)
+pt2_tour, pt2_lodge = point_spots(phase1 + phase2, sp1 + sp2 + [(p, 0) for p, _ in pt1_tour + pt1_lodge])
+def reach(spts, r=WALK):
+    ps = [p for p in spts]
+    near = lambda q: min(q.distance(x) for x in ps) <= r
+    return dict(lodg=sum(near(q) for q, _, _ in lodg), hotel=sum(near(q) for q, k, _ in lodg if k in HOTEL), tour=sum(near(q) for q, _, _ in tours),
+                stops=sum(near(Point(*b)) for b in Bp))
+all1 = [p for p, _ in sp1] + [p for p, _ in pt1_tour + pt1_lodge]
+all12 = all1 + [p for p, _ in sp2] + [p for p, _ in pt2_tour + pt2_lodge]
 
 WALK, PM5, PM10 = 300, 770, 1540  # 직선거리(m): 도보 5분(80m/분, 우회계수 1.3), PM 12km/h 5분·10분(우회계수 1.3)
 def cover(lines):
@@ -113,7 +144,10 @@ city_km2 = inside.sum() * PX / 1e6; built_km2 = built.sum() * PX / 1e6
 stats = dict(city_km2=city_km2, built_km2=built_km2,
              lc={k: float(((lc == c) & inside).sum() * PX / 1e6) for k, c in (("forest", 10), ("grass", 30), ("crop", 40), ("built", 50), ("bare", 60), ("water", 80))},
              lengths={nm: ln.length for nm, ln in phase1 + phase2},
-             spots1=dict(total=len(sp1), A=sum(a for _, a in sp1)), spots2=dict(total=len(sp2), A=sum(a for _, a in sp2)))
+             spots1=dict(total=len(sp1), A=sum(a for _, a in sp1), tour=len(pt1_tour), lodge=len(pt1_lodge)), spots2=dict(total=len(sp2), A=sum(a for _, a in sp2), tour=len(pt2_tour), lodge=len(pt2_lodge)),
+             base=dict(lodg=len(lodg), hotel=sum(k in HOTEL for _, k, _ in lodg), tour=len(tours), stops=len(Bp)),
+             reach1=reach(all1), reach12=reach(all12), reach1_pm10=reach(all1, PM10), reach12_pm10=reach(all12, PM10),
+             pt_names=dict(tour1=[n for _, n in pt1_tour], lodge1=[n for _, n in pt1_lodge], tour2=[n for _, n in pt2_tour], lodge2=[n for _, n in pt2_lodge]))
 for tag, c in (("p1", c1), ("p12", c12)):
     stats[tag] = {k: dict(area=v["area"], area_pct=v["area"] / city_km2 * 100, built=v["built"], built_pct=v["built"] / built_km2 * 100) for k, v in c.items()}
 stats["dong"] = []
@@ -189,9 +223,13 @@ fig.tight_layout(); fig.savefig(os.path.join(OUT, "map_coverage.png")); plt.clos
 fig, ax = plt.subplots(figsize=(8, 9.2), dpi=220)
 cx0, cy0 = to_m(128.5745, 38.1835); cx1, cy1 = to_m(128.6115, 38.2205)
 base(ax, (cx0, cx1), (cy0, cy1), bnd=False)
-for nm, p in ZONES.items():
-    fillg(ax, p.buffer(ZR), color="#e74c3c", alpha=0.12, lw=0)
-    ax.plot(*p.buffer(ZR).exterior.xy, color="#e74c3c", lw=0.9, ls="--")
+fillg(ax, zoneB, color="#f5b041", alpha=0.10, lw=0)
+for g in getattr(zoneU, "geoms", [zoneU]):
+    if g.geom_type == "Polygon":
+        fillg(ax, g, color="#e74c3c", alpha=0.16, lw=0); ax.plot(*g.exterior.xy, color="#e74c3c", lw=0.9, ls="--")
+ax.scatter(Lp[:, 0], Lp[:, 1], s=4, c="#7d3c98", alpha=.55, lw=0, zorder=4)
+ax.scatter(Bp[:, 0], Bp[:, 1], s=7, marker="s", c="#555", alpha=.7, lw=0, zorder=4)
+ax.scatter(Tp[:, 0], Tp[:, 1], s=16, marker="^", c="#1e8449", alpha=.85, lw=0, zorder=4)
 for _, ln in phase1:
     ax.plot(*ln.xy, color="#2c6fb7", lw=3, alpha=.8, solid_capstyle="round")
 for _, ln in phase2:
@@ -200,6 +238,10 @@ for p, a in sp1:
     ax.plot(p.x, p.y, "o", ms=5.2 if a else 4.4, mfc="#e74c3c" if a else "#1f4e8c", mec="white", mew=.7, zorder=5)
 for p, a in sp2:
     ax.plot(p.x, p.y, "o", ms=3.6, mfc="white", mec="#1f4e8c", mew=.9, zorder=5)
+for p, _ in pt1_tour + pt2_tour:
+    ax.plot(p.x, p.y, "D", ms=5.5, mfc="#27ae60", mec="white", mew=.8, zorder=6)
+for p, _ in pt1_lodge + pt2_lodge:
+    ax.plot(p.x, p.y, "D", ms=5.5, mfc="#8e44ad", mec="white", mew=.8, zorder=6)
 STN = [("S1", "모빌리티 허브", term, (-40, -40)),
        ("S2", "휴식 스테이션(청호해변)", Point(coast1.interpolate(coast1.project(P(38.1975, 128.602))).coords[0]), (70, 25)),
        ("S3", "포토 스테이션(엑스포타워)", expo, (-30, -55)),
@@ -211,7 +253,7 @@ for k, label, p, (ox, oy) in STN:
                 ha="center", bbox=dict(boxstyle="round,pad=.25", fc="white", ec="#f39c12", lw=.8),
                 arrowprops=dict(arrowstyle="-", color="#7a4a00", lw=.7), zorder=8)
 LBL = [("청초호", 38.1985, 128.5870, 11, "#1f4e8c"), ("영랑호", 38.2175, 128.5790, 10, "#1f4e8c"), ("동해", 38.200, 128.6085, 11, "#1f4e8c"),
-       ("속초해수욕장", 38.1880, 128.6045, 7.5, "#333"), ("아바이마을", 38.2008, 128.5985, 7.5, "#333"),
+       ("속초해수욕장", 38.1880, 128.6045, 7.5, "#333"), ("아바이마을", 38.1990, 128.5962, 7.5, "#333"),
        ("청호동 해안 자전거길", 38.1925, 128.6050, 7, "#333"), ("중앙시장", 38.2062, 128.5872, 8, "#333"), ("동명항·영금정(2단계)", 38.2120, 128.6040, 7, "#555")]
 for t, la, lo, fs, col in LBL:
     x, y = to_m(lo, la); ax.text(float(x), float(y), t, fontsize=fs, color=col, ha="center", weight="bold" if fs > 9 else "normal",
@@ -222,9 +264,15 @@ ax.legend(handles=[Line2D([], [], color="#2c6fb7", lw=3, label="1단계 가상�
                    Line2D([], [], marker="o", ls="", mfc="#e74c3c", mec="white", ms=7, label="A등급 가상주차구역 (50~100m 간격)"),
                    Line2D([], [], marker="o", ls="", mfc="#1f4e8c", mec="white", ms=6, label="B등급 가상주차구역 (150~200m 간격)"),
                    Line2D([], [], marker="o", ls="", mfc="white", mec="#1f4e8c", ms=5, label="2단계 가상주차구역"),
+                   Line2D([], [], marker="D", ls="", mfc="#27ae60", mec="white", ms=6, label="관광지형 가상주차구역"),
+                   Line2D([], [], marker="D", ls="", mfc="#8e44ad", mec="white", ms=6, label="숙박시설형 가상주차구역"),
                    Line2D([], [], marker="s", ls="", mfc="#f39c12", mec="#7a4a00", ms=9, label="MaaS 스테이션"),
-                   Patch(fc="#e74c3c", alpha=.15, ec="#e74c3c", ls="--", label="A등급 핵심 관광·상권 구역(반경 350m)")],
-          loc="upper left", fontsize=7, frameon=True)
+                   Patch(fc="#e74c3c", alpha=.2, ec="#e74c3c", ls="--", label="A등급 구역(입지점수 0.6 이상)"),
+                   Patch(fc="#f5b041", alpha=.2, label="B등급 후보(입지점수 0.35~0.6)"),
+                   Line2D([], [], marker="o", ls="", mfc="#7d3c98", mec="none", ms=3, label="숙박시설(영업)"),
+                   Line2D([], [], marker="^", ls="", mfc="#1e8449", mec="none", ms=5, label="관광지(TourAPI)"),
+                   Line2D([], [], marker="s", ls="", mfc="#555", mec="none", ms=3, label="버스정류장")],
+          loc="upper left", fontsize=7, frameon=True, framealpha=.95).set_zorder(20)
 ax.set_title("청초호·해안길 가상주차제 구상도 (개략)", fontsize=12, weight="bold")
 fig.tight_layout(); fig.savefig(os.path.join(OUT, "map_concept.png")); plt.close(fig)
 print(json.dumps({k: v for k, v in stats.items() if k != "dong"}, ensure_ascii=False, indent=1))
@@ -233,3 +281,11 @@ for r in stats["dong"]:
 for nm, ln in phase1 + phase2:
     s = spots([(nm, ln)])
     print("SEG", nm, round(ln.length), len(s), sum(a for _, a in s))
+
+from scipy.spatial import cKDTree
+for i, g in enumerate(sorted(getattr(zoneU, "geoms", [zoneU]), key=lambda g: -g.area)):
+    c = g.centroid; inL = sum(g.buffer(1).contains(Point(*q)) for q in Lp); inT = [j for j, q in enumerate(Tp) if g.buffer(1).contains(Point(*q))]
+    inB = sum(g.buffer(1).contains(Point(*q)) for q in Bp)
+    lo, la = to_ll(c.x, c.y)
+    d1 = min(ln.distance(c) for _, ln in phase1); d2 = min(ln.distance(c) for _, ln in phase2)
+    print("CL", i, round(g.area / 1e4, 1), "ha", round(float(la), 4), round(float(lo), 4), "L", inL, "T", len(inT), "B", inB, "d1", round(d1), "d2", round(d2))
