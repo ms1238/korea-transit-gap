@@ -148,6 +148,7 @@ async function main() {
   fillSgg();
   $('urban').onchange = e => { st.urban = e.target.checked; render(); };
   $('gu').onchange = e => { st.gu = e.target.checked; render(); };
+  $('en-details').addEventListener('toggle', syncEnglish);
   window.addEventListener('hashchange', () => { applyTab(); render(); });
   applyTab();
   $('layers').open = !NARROW;
@@ -356,6 +357,16 @@ let FEEG = {};  // fee label key → its 시군구
 // the metric colours fade while an overlay that colours 시군구 (조례·견인, PM 기기 수) is on, so its colours read cleanly
 // show the tab's controls and sections; 제도·규제 starts with the 견인료 map when no 조례 condition is ticked
 let autoOrd = false;
+// the English table under the Korean one (en.html?embed=…): status on 공백·PM 연계·공급, regulation on 제도·규제,
+// filtered to the picked 시도; loaded when opened
+function syncEnglish() {
+  const det = $('en-details'), f = $('en-frame');
+  if (!det || $('en-embed').hidden) return;
+  const src = `en.html?embed=${st.tab === 'policy' ? 'reg' : st.tab === 'pm' ? 'status' : 'both'}${st.sido ? '&sido=' + st.sido : ''}`;
+  $('en-link').href = `en.html${st.sido ? '?sido=' + st.sido : ''}`;
+  if (det.open && f.getAttribute('src') !== src) f.setAttribute('src', src);
+}
+window.addEventListener('message', e => { if (e.origin === location.origin && e.data?.enHeight) $('en-frame').style.height = Math.min(e.data.enHeight + 4, 900) + 'px'; });
 function applyTab() {
   const h = location.hash.replace('#', '');
   st.tab = TABS[h] ? h : 'all';
@@ -367,6 +378,7 @@ function applyTab() {
   if (st.tab === 'policy') $('layers').open = true;
   syncLayers();
   paintOrd();
+  syncEnglish();
 }
 // a layer shows when its checkbox is ticked and the checkbox is on this tab
 const LAYERS = [['show-stops', 'stops'], ['show-rail', 'rail'], ['show-grid', 'pmgrid'], ['show-fleet', 'fleet'], ['show-park', 'pmpark'],
@@ -482,6 +494,7 @@ function render() {
   renderDongs(rows, m);
   renderInsights();
   paintSel();
+  syncEnglish();
 }
 
 // plain-language findings for the current selection, in short groups: 대중교통 공백 / PM으로 메울 곳 / 공급 / 제도.
@@ -602,6 +615,8 @@ function renderInsights() {
   $('ins-more').textContent = st.insMore ? '접기' : `더 보기 (${shown.length - 1})`;
 }
 
+// grey = no figure; name the 시군구 left out for missing bus stop data (속초 등), so the grey is not read as 'no gap'
+const noData = () => { const g = [...new Set(D.filter(r => r[C.stop_gap]).map(r => r[C.sggnm]))]; return g.length ? `자료 없음 <small>(정류장 자료 부족: ${g.slice(0, 3).map(esc).join('·')}${g.length > 3 ? ` 등 ${g.length}곳` : ''})</small>` : '자료 없음'; };
 function legend(m) {
   const lab = m.idx ? ['0~20', '20~40', '40~60', '60~80', '80~100'] : ['0~20%', '20~40%', '40~60%', '60~80%', '80~100%'];
   const row = (c, t, cls = '') => `<div class="row"><i class="${cls}" style="background:${c}"></i>${t}</div>`;
@@ -610,8 +625,8 @@ function legend(m) {
   const rail = '<i class="pt" style="background:#6250d6;border:1.5px solid #fff;outline:1px solid #6250d6"></i>';
   // phones: the colour scale as one bar and the stop kinds on one line, so the legend leaves the map visible
   const scale = NARROW
-    ? `<div class="bar">${RAMP.map(c => `<i style="background:${c}"></i>`).join('')}</div><div class="bar-l"><span>${m.idx ? '0' : '0%'}</span><span>${m.idx ? '100' : '100%'}</span></div>` + row(NODATA, '자료 없음')
-    : RAMP.map((c, i) => row(c, lab[i])).join('') + row(NODATA, '자료 없음');
+    ? `<div class="bar">${RAMP.map(c => `<i style="background:${c}"></i>`).join('')}</div><div class="bar-l"><span>${m.idx ? '0' : '0%'}</span><span>${m.idx ? '100' : '100%'}</span></div>` + row(NODATA, noData())
+    : RAMP.map((c, i) => row(c, lab[i])).join('') + row(NODATA, noData());
   const stops = NARROW
     ? `<div class="row wrap" style="margin-top:4px">정류장 ${stop.map(([c, t]) => `<span><i class="pt" style="background:${c}"></i>${t}</span>`).join('')}<span>${rail}철도역</span></div>`
     : `<div style="margin-top:4px"></div>` + stop.map(([c, t]) => row(c, `정류장(${t})`, 'pt')).join('') + `<div class="row">${rail}철도역</div>`;

@@ -174,3 +174,10 @@ header.intro { padding-top: 0; }
 .glossary dd { margin: 0; color: var(--ink-2); }
 @media (max-width: 640px) { .glossary { grid-template-columns: 1fr; } .glossary dd { margin-bottom: 6px; } }
 #q { font-size: 14px; padding: 2px 6px; }
+
+/* en.html inside an iframe under the Korean tables */
+body.embed { background: var(--panel); }
+body.embed > header, body.embed > footer, body.embed #sec-gloss { display: none; }
+body.embed section { padding: 0; margin-bottom: 12px; }
+body.embed .region-bar { position: static; border: 0; padding: 0 0 6px; margin: 0; }
+.en-embed iframe { width: 100%; border: 0; display: block; min-height: 200px; }
