@@ -87,14 +87,29 @@ zoneU = grade_poly(ZA).buffer(30).buffer(-30)
 zoneB = grade_poly(ZB)
 TER = {"고속버스터미널": P(38.19051, 128.59873), "시외버스터미널": P(38.21118, 128.59088)}
 
+# 스테이션 4곳(교수님안 위치 고정). 반경 100m 이내는 입지점수와 관계없이 A등급(정책 A)
+S2PT = Point(coast1.interpolate(coast1.project(P(38.1975, 128.602))).coords[0])
+STATIONS = {"S1": term, "S2": S2PT, "S3": expo, "S4": P(38.2042, 128.5935)}
+SR = 100
+S2R, S2_SEA = 300, 25  # S2 구간: 스테이션 앞뒤 300m는 75m 간격, 차도측 배제 → 해변측으로 25m 옮겨 배치
+
+def kind_at(p):
+    if zoneU.distance(p) <= 60:
+        return "A"
+    if min(p.distance(q) for q in STATIONS.values()) <= SR or p.distance(S2PT) <= S2R:
+        return "S"
+    return False
+
 def spots(lines):
     out = []
     for _, ln in lines:
         s = 0.0
         while s <= ln.length:
-            p = ln.interpolate(s); a = zoneU.distance(p) <= 60; out.append((p, a))
+            p = ln.interpolate(s); a = kind_at(p)
+            if a == "S" and p.distance(S2PT) <= S2R:
+                p = Point(p.x + S2_SEA, p.y)
+            out.append((p, a))
             s += 75 if a else 175
-    # drop near-duplicates where lines meet
     keep = []
     for p, a in out:
         if all(p.distance(q) > 40 for q, _ in keep):
@@ -144,7 +159,7 @@ city_km2 = inside.sum() * PX / 1e6; built_km2 = built.sum() * PX / 1e6
 stats = dict(city_km2=city_km2, built_km2=built_km2,
              lc={k: float(((lc == c) & inside).sum() * PX / 1e6) for k, c in (("forest", 10), ("grass", 30), ("crop", 40), ("built", 50), ("bare", 60), ("water", 80))},
              lengths={nm: ln.length for nm, ln in phase1 + phase2},
-             spots1=dict(total=len(sp1), A=sum(a for _, a in sp1), tour=len(pt1_tour), lodge=len(pt1_lodge)), spots2=dict(total=len(sp2), A=sum(a for _, a in sp2), tour=len(pt2_tour), lodge=len(pt2_lodge)),
+             spots1=dict(total=len(sp1), A=sum(a == "A" for _, a in sp1), S=sum(a == "S" for _, a in sp1), S2=sum(p.distance(S2PT) <= S2R + 30 for p, a in sp1 if a == "S"), tour=len(pt1_tour), lodge=len(pt1_lodge)), spots2=dict(total=len(sp2), A=sum(a == "A" for _, a in sp2), S=sum(a == "S" for _, a in sp2), tour=len(pt2_tour), lodge=len(pt2_lodge)),
              base=dict(lodg=len(lodg), hotel=sum(k in HOTEL for _, k, _ in lodg), tour=len(tours), stops=len(Bp)),
              reach1=reach(all1), reach12=reach(all12), reach1_pm10=reach(all1, PM10), reach12_pm10=reach(all12, PM10),
              pt_names=dict(tour1=[n for _, n in pt1_tour], lodge1=[n for _, n in pt1_lodge], tour2=[n for _, n in pt2_tour], lodge2=[n for _, n in pt2_lodge]))
@@ -235,8 +250,10 @@ for _, ln in phase1:
     ax.plot(*ln.xy, color="#2c6fb7", lw=3, alpha=.8, solid_capstyle="round")
 for _, ln in phase2:
     ax.plot(*ln.xy, color="#2c6fb7", lw=2, alpha=.6, ls=(0, (2, 1.5)))
+for k, q in STATIONS.items():
+    ax.plot(*q.buffer(SR).exterior.xy, color="#7a4a00", lw=.8, ls=":", zorder=4)
 for p, a in sp1:
-    ax.plot(p.x, p.y, "o", ms=5.2 if a else 4.4, mfc="#e74c3c" if a else "#1f4e8c", mec="white", mew=.7, zorder=5)
+    ax.plot(p.x, p.y, "o", ms=5.2 if a else 4.4, mfc={"A": "#e74c3c", "S": "#c0392b"}.get(a, "#1f4e8c"), mec="#3b0d0a" if a == "S" else "white", mew=1.1 if a == "S" else .7, zorder=5)
 for p, a in sp2:
     ax.plot(p.x, p.y, "o", ms=3.6, mfc="white", mec="#1f4e8c", mew=.9, zorder=5)
 for p, _ in pt1_tour + pt2_tour:
@@ -244,7 +261,7 @@ for p, _ in pt1_tour + pt2_tour:
 for p, _ in pt1_lodge + pt2_lodge:
     ax.plot(p.x, p.y, "D", ms=5.5, mfc="#8e44ad", mec="white", mew=.8, zorder=6)
 STN = [("S1", "모빌리티 허브", term, (-40, -40)),
-       ("S2", "휴식 스테이션(청호해변)", Point(coast1.interpolate(coast1.project(P(38.1975, 128.602))).coords[0]), (70, 25)),
+       ("S2", "휴식 스테이션(청호해변)", S2PT, (70, 25)),
        ("S3", "포토 스테이션(엑스포타워)", expo, (-30, -55)),
        ("S4", "로컬 스테이션(갯배·중앙시장)", P(38.2042, 128.5935), (-95, 20))]
 for k, label, p, (ox, oy) in STN:
@@ -263,6 +280,7 @@ scalebar(ax, cx0 + 200, cy0 + 200, 500)
 ax.legend(handles=[Line2D([], [], color="#2c6fb7", lw=3, label="1단계 가상주차 회랑"),
                    Line2D([], [], color="#2c6fb7", lw=2, ls=":", label="2단계 회랑"),
                    Line2D([], [], marker="o", ls="", mfc="#e74c3c", mec="white", ms=7, label="A등급 가상주차구역 (50~100m 간격)"),
+                   Line2D([], [], marker="o", ls="", mfc="#c0392b", mec="#3b0d0a", mew=1.1, ms=7, label="정책 A(스테이션 100m·S2 해변측 분산)"),
                    Line2D([], [], marker="o", ls="", mfc="#1f4e8c", mec="white", ms=6, label="B등급 가상주차구역 (150~200m 간격)"),
                    Line2D([], [], marker="o", ls="", mfc="white", mec="#1f4e8c", ms=5, label="2단계 가상주차구역"),
                    Line2D([], [], marker="D", ls="", mfc="#27ae60", mec="white", ms=6, label="관광지형 가상주차구역"),
@@ -281,7 +299,7 @@ for r in stats["dong"]:
     print(r)
 for nm, ln in phase1 + phase2:
     s = spots([(nm, ln)])
-    print("SEG", nm, round(ln.length), len(s), sum(a for _, a in s))
+    print("SEG", nm, round(ln.length), len(s), sum(a == "A" for _, a in s), sum(a == "S" for _, a in s))
 
 from scipy.spatial import cKDTree
 for i, g in enumerate(sorted(getattr(zoneU, "geoms", [zoneU]), key=lambda g: -g.area)):
