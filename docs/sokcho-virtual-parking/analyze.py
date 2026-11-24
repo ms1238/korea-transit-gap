@@ -377,33 +377,34 @@ import pickle; pickle.dump(dict(C1=C1, C2=C2), open(os.path.join(OUT, "cand.pkl"
 
 # ---------- 블록 안 고른 배치(Meng et al. 2025): 블록 면적의 90% 이상이 200m 안, 밀도 25개/㎢ 이상이 되도록 내부 구역 추가
 import numpy as _np
+RAD = 100  # Meng et al.: 1분(약 100m) 도보
 def fill_block(g, have):
     xs0, ys0, xs1, ys1 = g.bounds
     samp = [Point(x, y) for x in _np.arange(xs0, xs1, 20) for y in _np.arange(ys0, ys1, 20) if g.contains(Point(x, y))]
     inner = g.buffer(-10)
     cands = [Point(x, y) for x in _np.arange(xs0, xs1, 40) for y in _np.arange(ys0, ys1, 40) if inner.contains(Point(x, y))]
     pts = list(have); new = []
-    cov = lambda P_: sum(any(s.distance(q) <= 200 for q in P_) for s in samp) / len(samp)
-    covered = [any(s.distance(q) <= 200 for q in pts) for s in samp]
-    while sum(covered) / len(samp) < 0.92:
+    cov = lambda P_: sum(any(s.distance(q) <= RAD for q in P_) for s in samp) / len(samp)
+    covered = [any(s.distance(q) <= RAD for q in pts) for s in samp]
+    while sum(covered) / len(samp) < 0.90:
         best, gain = None, 0
         for q in cands:
-            if any(q.distance(r) < 80 for r in pts):
+            if any(q.distance(r) < 70 for r in pts):
                 continue
-            gn = sum(1 for k, s in enumerate(samp) if not covered[k] and s.distance(q) <= 200)
+            gn = sum(1 for k, s in enumerate(samp) if not covered[k] and s.distance(q) <= RAD)
             if gn > gain:
                 best, gain = q, gn
         if best is None:
             break
         pts.append(best); new.append(best)
-        covered = [c or s.distance(best) <= 200 for c, s in zip(covered, samp)]
+        covered = [c or s.distance(best) <= RAD for c, s in zip(covered, samp)]
     need = int(_np.ceil(g.area / 1e6 * 25))
     while len(pts) < need:
         best = max((q for q in cands if all(q.distance(r) >= 80 for r in pts)), key=lambda q: min(q.distance(r) for r in pts), default=None)
         if best is None:
             break
         pts.append(best); new.append(best)
-    c200 = sum(covered) / len(samp)
+    c200 = sum(any(s.distance(q) <= 200 for q in pts) for s in samp) / len(samp)
     c100 = sum(any(s.distance(q) <= 100 for q in pts) for s in samp) / len(samp)
     return new, c200, c100
 for c in C1 + C2:
@@ -412,7 +413,7 @@ for c in C1 + C2:
     new, c200, c100 = fill_block(c["geom"], have)
     c.update(have=len(have), interior=new, total=len(have) + len(new), cov200=c200, cov100=c100,
              dens=(len(have) + len(new)) / (c["geom"].area / 1e6))
-    print("FILL", c["name"], c["have"], "+", len(new), "=", c["total"], f"{c['dens']:.0f}/km2 cov200 {c200:.0%}")
+    print("FILL", c["name"], c["have"], "+", len(new), "=", c["total"], f"{c['dens']:.0f}/km2 cov100 {c100:.0%} cov200 {c200:.0%}")
 inblock = shapely.union_all([c["geom"].buffer(30) for c in C1])
 outside1 = [p for p in allspots1 if not inblock.contains(p)]
 print("OUTSIDE1", len(outside1), "corridor", sum(1 for p, _ in sp1 if not inblock.contains(p)), "point", sum(1 for p, _ in pt1_tour + pt1_lodge if not inblock.contains(p)))
@@ -477,7 +478,7 @@ for (c, i, ls), ax in zip(ALL, axs.flat):
     scalebar(ax, mx - w + 60, my - h + 60, 200)
     stx = ", ".join(c["stations"]) if c["stations"] else "-"
     ax.set_title(f"{NUM[i]} {c['name']}" + (" (2단계)" if ls == "--" else ""), fontsize=9.5, weight="bold", loc="left")
-    ax.set_xlabel(f"(면적) {c['area']:.2f}㎢ / (가상주차구역) {c['total']}개소 / (200m 커버) {c['cov200']:.0%} / (스테이션) {stx}", fontsize=7.8)
+    ax.set_xlabel(f"(면적) {c['area']:.2f}㎢ / (가상주차구역) {c['total']}개소 / (100m 커버) {c['cov100']:.0%} / (스테이션) {stx}", fontsize=7.8)
 for ax in list(axs.flat)[n:]:
     ax.axis("off")
 fig.tight_layout(); fig.savefig(os.path.join(OUT, "map_candidates_panels.png")); plt.close(fig)

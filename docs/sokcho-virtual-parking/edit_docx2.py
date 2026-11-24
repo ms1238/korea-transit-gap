@@ -14,7 +14,7 @@ T1 = sum(c["total"] for c in c1); H1 = sum(c["have"] for c in c1); N1 = T1 - H1
 A1 = sum(c["area"] for c in c1); T2 = sum(c["total"] for c in c2); A2 = sum(c["area"] for c in c2)
 OUT1_C, OUT1_P = 27, 6          # 1단계 블록 밖 회랑, 거점 (analyze.py OUTSIDE1)
 OUT2_C, OUT2_P = 51, 6          # 2단계 블록 밖 회랑, 거점 (analyze.py P2)
-cmin = min(c["cov200"] for c in c1); dmin = min(c["dens"] for c in c1); dmax = max(c["dens"] for c in c1)
+cmin = min(c["cov100"] for c in c1); dmin = min(c["dens"] for c in c1); dmax = max(c["dens"] for c in c1)
 
 
 def paras():
@@ -124,13 +124,13 @@ put("ㅇ 회랑 안에서는 지정구역에서만", "ㅇ 반납 의무는 후�
     "그 외 시가지는 현행 자유 반납을 유지")
 put("회랑 구역은 청초호와 해안길에만", "준수율은 구역 수보다 의무구역 안 밀도와 고른 분포가 좌우함. 1㎢당 20~30개를 넘으면 효과가 "
     "크게 줄고, 밀도가 낮을수록 구역 200m 안 면적 비율이 중요(Meng et al., 2025) → 의무구역을 시가지로 넓히기보다 블록 안을 고르게 채움")
-put("시가지 생활권 구역은 1단계에", f"블록마다 구역 200m 안 면적 비율 90% 이상, 밀도 1㎢당 25개 이상이 되도록 블록 내부에 구역을 "
+put("시가지 생활권 구역은 1단계에", f"블록마다 걸어서 1분(직선 100m) 안에 구역이 있는 면적이 90% 이상이 되도록 블록 내부에 구역을 "
     f"추가 배치(1단계 {N1}개 추가, 회랑에만 몰려 있던 배치 보완)")
 put("구역 수는 현장조사로 확정", "관광 블록은 구역을 더 늘리기보다 구역당 수용 대수를 키움(관광지 반납 수요는 상업지 대비 약 1.65배, "
     "Meng et al., 2025)")
 for t in table_by_head("등급"):
     rebuild(t, [
-        ["의무(후보지 블록)", f"입지점수 A등급 군집과 스테이션 4곳을 묶은 블록 6곳({A1:.2f}㎢)", "1㎢당 25개 이상, 200m 안 면적 90% 이상",
+        ["의무(후보지 블록)", f"입지점수 A등급 군집과 스테이션 4곳을 묶은 블록 6곳({A1:.2f}㎢)", "100m(도보 1분) 안 면적 90% 이상",
          "스테이션, 보도형, 연석 표시형, 주차면 전환형. 블록 안에서는 지정구역 밖 반납 불가"],
         ["권장(회랑)", "블록 밖 해안 자전거길, 청초호 둘레", "150~200m", "연석 표시형, 빗금구역형, 주차면 전환형(차도 인접 구간 제외). 반납 시 앱 할인"],
         ["권장(거점)", "블록 밖 관광지, 대형 숙박시설", "시설당 1개", "관광지형, 숙박시설형"],
@@ -140,7 +140,7 @@ for t in table_by_head("등급"):
 
 # 4. 단계별 구역 배치
 put("ㅇ 1단계 밀도는", f"ㅇ 반납 의무구역(블록 6곳, {A1:.2f}㎢)의 밀도는 1㎢당 약 {T1 / A1:.0f}개이며, 블록별 {dmin:.0f}~{dmax:.0f}개, "
-    f"구역 200m 안 면적 비율 {cmin:.0%} 이상으로 논문 기준(1㎢당 20~30개, 고른 분포)을 충족")
+    f"걸어서 1분(직선 100m) 안 면적 비율 {cmin:.0%} 이상으로 논문 권고(1㎢당 20~30개, 최대 약 100m 도보)를 충족")
 cap = find("[그림 2]")
 img_el = cap.getprevious()
 for blip in img_el.findall(".//{*}blip"):
@@ -170,14 +170,14 @@ tbl = copy.deepcopy(tbl_tpl)
 a.addnext(tbl)
 t = docx.table.Table(tbl, d)
 rows = [[f"{NUM[i]} {c['name']}" + (" (2단계)" if i >= 6 else ""), f"{c['area']:.2f}㎢",
-         f"{c['total']}개" + (f"(+{c['interior']})" if c["interior"] else ""), f"{c['cov200']:.0%}",
+         f"{c['total']}개" + (f"(+{c['interior']})" if c["interior"] else ""), f"{c['cov100']:.0%}",
          ", ".join(c["stations"]) or "-", str(c["lodg"])] for i, c in enumerate(C)]
 rows.append(["1단계 계(6곳)", f"{A1:.2f}㎢", f"{T1}개(+{N1})", f"{cmin:.0%} 이상", "S1~S4", str(sum(c['lodg'] for c in c1))])
-heads = ["후보지", "면적", "가상주차구역(내부 추가)", "200m 안 면적", "스테이션", "숙박"]
+heads = ["후보지", "면적", "가상주차구역(내부 추가)", "100m 안 면적", "스테이션", "숙박"]
 rebuild(t, rows, [5.4, 1.8, 3.0, 2.2, 2.0, 1.6])
 for j, h in enumerate(heads):
     fill(t.rows[0].cells[j], h)
-n200 = clone_para(normal_tpl, "※ 200m 안 면적은 블록 면적 중 가장 가까운 구역까지 200m 이내인 비율(논문의 커버리지 정의), 숙박은 블록 안 영업 숙박시설 수", tbl)
+n200 = clone_para(normal_tpl, "※ 100m 안 면적은 블록 면적 중 가장 가까운 구역까지 직선 100m(도보 약 1분) 이내인 비율로, 논문의 커버리지 정의(200m)보다 엄격하게 적용. 숙박은 블록 안 영업 숙박시설 수", tbl)
 b = clone_para(normal_tpl, "ㅇ 위 후보지와 구역 배치는 숙박시설, 관광지, 정류장 등 공간 자료로 만든 초안이며, 궁극적으로는 실제 이용 데이터와 "
                "지자체 민원 데이터로 검증하고 보정해야 함", n200)
 b = clone_para(list_tpl, "(이용 데이터, 운영사) 대여 및 반납 위치, 구역 밖 반납 시도 위치, 시간대와 요일별 이용량, 구역별 회전율", b)
@@ -200,7 +200,7 @@ for t in table_by_head("단계"):
             k = row.cells[0].text.strip()
             if k.startswith("1"):
                 fill(row.cells[1], f"후보지 블록 6곳(의무 {T1}개) + 회랑 권장 {OUT1_C + OUT1_P}개 + 스테이션 4곳, '27년 7~8월 집중 운영")
-                fill(row.cells[2], "블록 안 반납 준수율 85% 이상(대구 달성 수준), 블록별 200m 안 면적 90% 이상 유지, 시범구역 PM 민원 감소율, 관광지 혼잡 주민 체감")
+                fill(row.cells[2], "블록 안 반납 준수율 85% 이상(대구 달성 수준), 블록별 100m 안 면적 90% 이상 유지, 시범구역 PM 민원 감소율, 관광지 혼잡 주민 체감")
             elif k.startswith("2"):
                 fill(row.cells[1], f"동명항·영금정, 시외버스터미널 블록 2곳(의무 {T2}개) 추가, 영랑호 둘레 권장 구역")
         break
