@@ -40,6 +40,7 @@ import json
 import math
 import os
 import re
+import sys
 from collections import defaultdict
 
 import numpy as np
@@ -897,6 +898,66 @@ def write_beam(dongs, geoms):
           f"프랜차이즈 {sum(x['properties']['kind'] == '프랜차이즈' for x in feats)}); not mapped: {', '.join(lost) or '-'}", flush=True)
 
 
+TOW_CELL = 0.002  # 서울 견인 map cells (degrees, about 180 m × 220 m)
+
+
+def write_seoul_tow(dongs=None, geoms=None):
+    """site/data/seoul_tow.json from scripts/static/seoul_tow.csv (서울시 PM 견인 신고 내역, see seoul_tow_csv.py), one
+    column per field so the page can filter any date range: d = days since meta.start, h = hour, g = 구 index, s = 상태
+    index (meta.status), k = 1 for 즉시 견인 구역, m = minutes from 신고 to 조치 (null without 조치일), b = 조치 주체 index
+    (meta.by), w = 견인업체·구청 index (co, null for 운영사 or none), c = map cell index (cells: [lon, lat] of TOW_CELL squares, null without a position). With the 행정동
+    boundaries it also writes the 서울 구 outlines (gu.geojson inside the same file)."""
+    path = os.path.join(os.path.dirname(__file__), "static", "seoul_tow.csv")
+    if not os.path.exists(path):
+        return
+    import datetime as dt
+    with open(path, encoding="utf-8") as f:
+        recs = list(csv.DictReader(f))
+    start = dt.date.fromisoformat(recs[0]["d"])
+    status, by = list("TCENR"), ["", "B", "W", "G"]
+    gu = sorted({r["gu"] for r in recs if r["gu"]})
+    gi = {g: i for i, g in enumerate(gu)}
+    co = sorted({r["co"] for r in recs if r.get("co")})
+    coi = {c: i for i, c in enumerate(co)}
+    cells, ci = [], {}
+    cols = {k: [] for k in "dhgskmbwc"}
+    for r in recs:
+        cols["d"].append((dt.date.fromisoformat(r["d"]) - start).days)
+        cols["h"].append(int(r["h"]))
+        cols["g"].append(gi.get(r["gu"]))
+        cols["s"].append(status.index(r["s"]))
+        cols["k"].append(1 if r["k"] == "I" else 0)
+        cols["m"].append(float(r["m"]) if r["m"] else None)
+        cols["b"].append(by.index(r["by"]))
+        cols["w"].append(coi.get(r.get("co")))
+        c = None
+        if r["lat"] and r["lon"]:
+            key = (round(float(r["lon"]) / TOW_CELL), round(float(r["lat"]) / TOW_CELL))
+            if key not in ci:
+                ci[key] = len(cells)
+                cells.append([round(key[0] * TOW_CELL, 4), round(key[1] * TOW_CELL, 4)])
+            c = ci[key]
+        cols["c"].append(c)
+    out = {"meta": {"start": start.isoformat(), "end": recs[-1]["d"], "n": len(recs), "cell": TOW_CELL,
+                    "status": ["견인", "운영사 수거·이동", "처리시간 경과", "기기 미발견", "미처리"],
+                    "by": ["없음", "운영사", "견인업체", "구청"]},
+           "gu": gu, "co": co, "cells": cells, "cols": cols}
+    if dongs is not None:
+        parts = defaultdict(list)
+        for d, g in zip(dongs, geoms):
+            if d["sido"] == "11":
+                parts[d["sggnm"]].append(g)
+        out["bounds"] = {"type": "FeatureCollection", "features": [
+            {"type": "Feature", "properties": {"gu": n},
+             "geometry": json.loads(shapely.to_geojson(shapely.set_precision(shapely.union_all(gs).simplify(0.0003), 1e-5)))}
+            for n, gs in sorted(parts.items())]}
+    os.makedirs(OUT, exist_ok=True)
+    with open(os.path.join(OUT, "seoul_tow.json"), "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
+    print(f"서울 견인: {len(recs)} 신고 {start} – {recs[-1]['d']}, {len(cells)} cells, "
+          f"{len(out.get('bounds', {}).get('features', []))} 구 outlines", flush=True)
+
+
 def main():
     os.makedirs(os.path.join(OUT, "download"), exist_ok=True)
     adm = load("admin_dong.json")
@@ -1204,9 +1265,13 @@ def main():
     write_beam(dongs, geoms)
     write_bounds(dongs, geoms)
     write_pm_supply(dongs, pop, tree)
+    write_seoul_tow(dongs, geoms)
     for name in ("stats.json", "dongs.geojson", "stops.json", "stations.json", "pmgrid.png", "beam.geojson", "bounds.geojson", "bike.geojson"):
         print(f"  {name}: {os.path.getsize(os.path.join(OUT, name)) / 1e6:.1f} MB", flush=True)
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:] == ["--tow"]:  # only the 서울 견인 data (no raw/ needed)
+        write_seoul_tow()
+    else:
+        main()
