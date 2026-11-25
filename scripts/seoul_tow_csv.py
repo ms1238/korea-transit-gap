@@ -9,6 +9,7 @@ photo:
                                              (24시간 안에 조치 없음, 자동 종결), N 기기미발견, R 신고 (미처리)
     k     즉시/일반 (I / G)              m   신고 → 조치일 (분, 소수 1자리; 조치일이 없으면 비움)
     by    조치 주체: B 운영사, W 견인업체, G 구청, (비움) 없음
+    co    조치업체 이름 (견인업체·구청일 때만; 운영사는 비움)
     lat, lon  신고 위치, 소수 3자리 (약 100 m)로 반올림
 
 Run when new exports arrive:
@@ -45,6 +46,7 @@ def main(folder):
         "d": t0.dt.strftime("%Y-%m-%d"), "h": t0.dt.hour, "gu": d["구정보"].fillna(""),
         "s": d["상태"].map(STATUS), "k": d["즉시/일반"].map({"즉시": "I", "일반": "G"}).fillna(""),
         "m": ((t1 - t0).dt.total_seconds() / 60).round(1), "by": by,
+        "co": d["조치업체"].fillna("").where(by.isin(["W", "G"]), ""),
         "lat": pd.to_numeric(d["신고시점 위도"], errors="coerce").round(3),
         "lon": pd.to_numeric(d["신고시점 경도"], errors="coerce").round(3),
     }).sort_values(["d", "h"], kind="stable")

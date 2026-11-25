@@ -240,3 +240,5 @@ body.tow .kpis { grid-template-columns: repeat(6, 1fr); }
   .srow { grid-template-columns: 1fr; } .srow .sv { grid-column: 1; }
   .tl-bar #cursor { flex-basis: 100%; }
 }
+.cell-bar { display: inline-block; width: 60px; height: 8px; background: #f1f0ec; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+.cell-bar i { display: block; height: 8px; background: #f47230; border-radius: 2px; }

@@ -905,7 +905,7 @@ def write_seoul_tow(dongs=None, geoms=None):
     """site/data/seoul_tow.json from scripts/static/seoul_tow.csv (서울시 PM 견인 신고 내역, see seoul_tow_csv.py), one
     column per field so the page can filter any date range: d = days since meta.start, h = hour, g = 구 index, s = 상태
     index (meta.status), k = 1 for 즉시 견인 구역, m = minutes from 신고 to 조치 (null without 조치일), b = 조치 주체 index
-    (meta.by), c = map cell index (cells: [lon, lat] of TOW_CELL squares, null without a position). With the 행정동
+    (meta.by), w = 견인업체·구청 index (co, null for 운영사 or none), c = map cell index (cells: [lon, lat] of TOW_CELL squares, null without a position). With the 행정동
     boundaries it also writes the 서울 구 outlines (gu.geojson inside the same file)."""
     path = os.path.join(os.path.dirname(__file__), "static", "seoul_tow.csv")
     if not os.path.exists(path):
@@ -917,8 +917,10 @@ def write_seoul_tow(dongs=None, geoms=None):
     status, by = list("TCENR"), ["", "B", "W", "G"]
     gu = sorted({r["gu"] for r in recs if r["gu"]})
     gi = {g: i for i, g in enumerate(gu)}
+    co = sorted({r["co"] for r in recs if r.get("co")})
+    coi = {c: i for i, c in enumerate(co)}
     cells, ci = [], {}
-    cols = {k: [] for k in "dhgskmbc"}
+    cols = {k: [] for k in "dhgskmbwc"}
     for r in recs:
         cols["d"].append((dt.date.fromisoformat(r["d"]) - start).days)
         cols["h"].append(int(r["h"]))
@@ -927,6 +929,7 @@ def write_seoul_tow(dongs=None, geoms=None):
         cols["k"].append(1 if r["k"] == "I" else 0)
         cols["m"].append(float(r["m"]) if r["m"] else None)
         cols["b"].append(by.index(r["by"]))
+        cols["w"].append(coi.get(r.get("co")))
         c = None
         if r["lat"] and r["lon"]:
             key = (round(float(r["lon"]) / TOW_CELL), round(float(r["lat"]) / TOW_CELL))
@@ -938,7 +941,7 @@ def write_seoul_tow(dongs=None, geoms=None):
     out = {"meta": {"start": start.isoformat(), "end": recs[-1]["d"], "n": len(recs), "cell": TOW_CELL,
                     "status": ["견인", "운영사 수거·이동", "처리시간 경과", "기기 미발견", "미처리"],
                     "by": ["없음", "운영사", "견인업체", "구청"]},
-           "gu": gu, "cells": cells, "cols": cols}
+           "gu": gu, "co": co, "cells": cells, "cols": cols}
     if dongs is not None:
         parts = defaultdict(list)
         for d, g in zip(dongs, geoms):

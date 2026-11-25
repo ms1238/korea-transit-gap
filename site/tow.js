@@ -17,8 +17,8 @@ const STACK = [1, 0, 3, 2, 4];  // bottom → top: the two actions first, then t
 const RAMP = ['#fde3d0', '#f9b98f', '#f08a4f', '#d4572a', '#9c3417'];  // sequential orange (same as the 안전 page)
 const HIST = [[0, 5, '5분 미만'], [5, 15, '5~15분'], [15, 30, '15~30분'], [30, 60, '30분~1시간'], [60, 120, '1~2시간'], [120, 360, '2~6시간'], [360, 1440, '6~24시간'], [1440, Infinity, '24시간 이상']];
 
-let T, N, C, S, MONTH, WEEK, MAXD, map, mapReady = false, playing = null, tsort = { k: 'n', asc: false };
-const st = { a: 0, b: 0, unit: 'm', gu: '', kind: '', tl: 'off', cur: 0, metric: 'n', stat: 'med' };
+let T, N, C, S, MONTH, WEEK, MAXD, map, mapReady = false, playing = null, tsort = { k: 'n', asc: false }, csort = { k: 't', asc: false };
+const st = { a: 0, b: 0, unit: 'm', gu: '', kind: '', co: '', tl: 'off', cur: 0, metric: 'n', stat: 'med' };
 let periods = [], rangeIdx = [];
 
 const dayDate = d => new Date(Date.parse(T.meta.start) + d * DAY);
@@ -36,12 +36,15 @@ async function main() {
   $('asof').textContent = `${T.meta.start} ~ ${T.meta.end} · 신고 ${fmt(N)}건`;
   for (const id of ['from', 'to']) { $(id).min = T.meta.start; $(id).max = T.meta.end; }
   T.gu.forEach((g, i) => $('gu').add(new Option(g, i)));
+  T.co.forEach((g, i) => $('co').add(new Option(g, i)));
   quickButtons();
   $('from').onchange = e => { const d = dayOf(e.target.value); if (!isNaN(d)) { st.a = clamp(d, 0, st.b); render(); } };
   $('to').onchange = e => { const d = dayOf(e.target.value); if (!isNaN(d)) { st.b = clamp(d, st.a, MAXD); render(); } };
   $('unit').onchange = e => { st.unit = e.target.value; render(); };
   $('gu').onchange = e => { st.gu = e.target.value; render(); };
   $('kind').onchange = e => { st.kind = e.target.value; render(); };
+  $('co').onchange = e => { st.co = e.target.value; render(); };
+  $('co-csv').onclick = downloadCoCsv;
   $('metric').onchange = e => { st.metric = e.target.value; renderSel(); };
   $('stat').onchange = e => { st.stat = e.target.value; render(); };
   document.querySelectorAll('[data-tl]').forEach(b => b.onclick = () => setTl(b.dataset.tl));
@@ -66,7 +69,7 @@ function quickButtons() {
 }
 
 const pid = d => st.unit === 'd' ? d : st.unit === 'w' ? WEEK[d] : MONTH[d];
-const baseOk = i => (st.gu === '' || C.g[i] === +st.gu) && (st.kind === '' || C.k[i] === +st.kind);
+const baseOk = i => (st.gu === '' || C.g[i] === +st.gu) && (st.kind === '' || C.k[i] === +st.kind) && (st.co === '' || C.w[i] === +st.co);
 
 function periodLabel(p, short) {
   const x = dayDate(p.d0), y = x.getUTCFullYear(), m = x.getUTCMonth() + 1, d = x.getUTCDate();
@@ -99,7 +102,7 @@ function render() {
   cur.max = Math.max(0, periods.length - 1);
   st.cur = clamp(st.cur, 0, periods.length - 1);
   cur.value = st.cur;
-  $('main-title').textContent = `${st.gu === '' ? '서울' : T.gu[+st.gu]}${st.kind === '' ? '' : st.kind === '1' ? ' · 즉시 견인 구역' : ' · 일반 구역'} ${{ d: '일별', w: '주별', m: '월별' }[st.unit]} 신고 건수와 처리 결과`;
+  $('main-title').textContent = `${st.gu === '' ? '서울' : T.gu[+st.gu]}${st.kind === '' ? '' : st.kind === '1' ? ' · 즉시 견인 구역' : ' · 일반 구역'}${st.co === '' ? '' : ' · ' + T.co[+st.co]} ${{ d: '일별', w: '주별', m: '월별' }[st.unit]} 신고 건수와 처리 결과`;
   drawMain(); drawBrush(); drawDur();
   renderCursor();
 }
@@ -142,6 +145,7 @@ function renderSel() {
   drawBy(idx);
   drawHour(idx);
   drawTable(idx, a, b);
+  drawCo(a, b);
   const f5 = dur[0].filter(m => m < 5).length;
   $('dur-note').textContent = dur[0].length ? `고른 시점 견인 ${fmt(dur[0].length)}건 가운데 ${pct(f5, dur[0].length)}(${fmt(f5)}건)는 신고 후 5분 안에 견인됐습니다. 평균은 며칠씩 걸린 소수 기록에 크게 끌려가므로 24시간 넘는 건을 빼고 냅니다. 한 시점에 3건 미만이면 선을 끊습니다.` : '';
 }
@@ -418,6 +422,49 @@ function drawTable(idx, a, b) {
     tableRows.map(r => `<tr data-g="${r.g ?? ''}" class="${st.gu !== '' && +st.gu === r.g ? 'sel' : ''}">${cols.map(([c]) => `<td ${c === 'gu' ? 'style="text-align:left"' : ''}>${f(c, r)}</td>`).join('')}</tr>`).join('') + '</tbody>';
   $('table').querySelectorAll('th').forEach(th => th.onclick = () => { tsort = { k: th.dataset.k, asc: tsort.k === th.dataset.k ? !tsort.asc : th.dataset.k === 'gu' }; renderSel(); });
   $('table').querySelectorAll('tbody tr').forEach(tr => tr.onclick = () => { const g = tr.dataset.g; if (g === '') return; st.gu = st.gu === g ? '' : g; $('gu').value = st.gu; render(); });
+}
+// 견인업체별: 견인완료 by each 조치업체 in the selection (ignores the 업체 filter itself so all firms stay comparable)
+let coRows = [];
+function drawCo(a, b) {
+  const by = new Map();
+  for (let i = 0; i < N; i++) {
+    const w = C.w[i]; if (w == null) continue;
+    const d = C.d[i]; if (d < a || d > b) continue;
+    if ((st.gu !== '' && C.g[i] !== +st.gu) || (st.kind !== '' && C.k[i] !== +st.kind)) continue;
+    let r = by.get(w); if (!r) by.set(w, r = { w, t: 0, nf: 0, im: 0, m: [], gu: new Map(), d0: d, d1: d });
+    r.d0 = Math.min(r.d0, d); r.d1 = Math.max(r.d1, d);
+    if (C.s[i] === 3) { r.nf++; continue; }
+    if (C.s[i] !== 0) continue;
+    r.t++; r.im += C.k[i];
+    if (C.m[i] != null) r.m.push(C.m[i]);
+    r.gu.set(C.g[i], (r.gu.get(C.g[i]) || 0) + 1);
+  }
+  const tot = [...by.values()].reduce((p, r) => p + r.t, 0);
+  coRows = [...by.values()].filter(r => r.t || r.nf).map(r => ({
+    co: T.co[r.w], w: r.w, t: r.t, sh: tot ? r.t / tot : 0, nf: r.nf, med: median(r.m), avg: mean24(r.m),
+    f1: r.m.length ? r.m.filter(m => m < 1).length / r.m.length : null, f5: r.m.length ? r.m.filter(m => m < 5).length / r.m.length : null,
+    im: r.t ? r.im / r.t : null, gu: [...r.gu.entries()].sort((p, q) => q[1] - p[1]).filter(([, n]) => n / r.t >= 0.005).slice(0, 3).map(([g, n]) => `${g == null ? '?' : T.gu[g]} ${Math.round(n / r.t * 100)}%`).join(', '),
+    span: `${iso(r.d0).slice(2).replace(/-/g, '.')} ~ ${iso(r.d1).slice(2).replace(/-/g, '.')}` }));
+  const cols = [['co', '견인업체'], ['t', '견인'], ['sh', '견인 중 비중'], ['med', '견인까지 중앙값'], ['avg', '평균 (24시간↓)'], ['f1', '1분 안에'], ['f5', '5분 안에'], ['im', '즉시 견인 구역'], ['nf', '기기 미발견'], ['gu', '주요 구'], ['span', '기록 기간']];
+  const k = csort.k, dir = csort.asc ? 1 : -1;
+  coRows.sort((p, q) => typeof p[k] === 'string' ? dir * p[k].localeCompare(q[k]) : dir * ((p[k] ?? -1) - (q[k] ?? -1)));
+  const pc = v => v == null ? '-' : (v * 100).toFixed(1) + '%';
+  const f = (c, r) => c === 'co' || c === 'gu' || c === 'span' ? esc(r[c]) : c === 't' || c === 'nf' ? fmt(r[c]) : c === 'med' || c === 'avg' ? fmtMin(r[c])
+    : c === 'f5' ? `<span class="cell-bar"><i style="width:${((r.f5 || 0) * 100).toFixed(1)}%"></i></span>${pc(r.f5)}` : pc(r[c]);
+  const left = c => c === 'co' || c === 'gu' || c === 'span';
+  $('co-title').textContent = `견인업체별 (${iso(a)} ~ ${iso(b)}, 견인 ${fmt(tot)}건)`;
+  $('co-table').innerHTML = `<thead><tr>${cols.map(([c, h]) => `<th data-k="${c}" class="${c === k ? 'on' : ''}" ${left(c) ? 'style="text-align:left"' : ''}>${h}</th>`).join('')}</tr></thead><tbody>` +
+    coRows.map(r => `<tr data-w="${r.w}" class="${st.co !== '' && +st.co === r.w ? 'sel' : ''}">${cols.map(([c]) => `<td ${left(c) ? 'style="text-align:left"' : ''}>${f(c, r)}</td>`).join('')}</tr>`).join('') + '</tbody>';
+  $('co-table').querySelectorAll('th').forEach(th => th.onclick = () => { csort = { k: th.dataset.k, asc: csort.k === th.dataset.k ? !csort.asc : th.dataset.k === 'co' }; drawCo(a, b); });
+  $('co-table').querySelectorAll('tbody tr').forEach(tr => tr.onclick = () => { const w = tr.dataset.w; st.co = st.co === w ? '' : w; $('co').value = st.co; render(); });
+}
+function downloadCoCsv() {
+  const [a, b] = selRange();
+  const head = ['견인업체', '견인', '견인중비중', '견인까지_중앙값_분', '평균_24시간이하_분', '1분안에비율', '5분안에비율', '즉시견인구역비율', '기기미발견', '주요구', '기록기간'];
+  const q = v => v == null ? '' : typeof v === 'number' ? +v.toFixed(4) : `"${String(v).replace(/"/g, '""')}"`;
+  const body = coRows.map(r => [r.co, r.t, r.sh, r.med, r.avg, r.f1, r.f5, r.im, r.nf, r.gu, r.span].map(q).join(','));
+  const blob = new Blob(['\ufeff' + [head.join(','), ...body].join('\n')], { type: 'text/csv' });
+  const l = document.createElement('a'); l.href = URL.createObjectURL(blob); l.download = `서울견인_업체별_${iso(a)}_${iso(b)}.csv`; l.click();
 }
 function downloadCsv() {
   const [a, b] = selRange();
