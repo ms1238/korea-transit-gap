@@ -9,7 +9,7 @@
 </head>
 <body>
 <main>
-  <nav class="tabs"><a href="index.html#all">종합<small>어디부터 봐야 하나?</small></a><a href="index.html#pm">공백·PM 연계·공급<small>어디가 비었고, PM이 메울 수 있나?</small></a><a href="index.html#policy">제도·규제<small>무엇이 PM을 막고 있나?</small></a><a href="accidents.html">안전 (합성데이터)<small>사고는 어떤 경향인가?</small></a><a href="about.html" class="on" aria-current="page">자료·방법<small>어떻게 계산했나?</small></a><a href="en.html">English<small>Tables for HQ</small></a></nav>
+  <nav class="tabs"><a href="index.html#all">종합<small>어디부터 봐야 하나?</small></a><a href="index.html#pm">공백·PM 연계·공급<small>어디가 비었고, PM이 메울 수 있나?</small></a><a href="index.html#policy">제도·규제<small>무엇이 PM을 막고 있나?</small></a><a href="accidents.html">안전 (합성데이터)<small>사고는 어떤 경향인가?</small></a><a href="tow.html">서울 견인<small>신고는 어떻게 처리됐나?</small></a><a href="about.html" class="on" aria-current="page">자료·방법<small>어떻게 계산했나?</small></a><a href="en.html">English<small>Tables for HQ</small></a></nav>
 <h1>지표 설명·출처·한계</h1>
 
 <h2>무엇을 보여 주나</h2>
@@ -121,6 +121,14 @@
   <li><b>종합</b>: 정책 점수와 사업 점수의 평균.</li>
 </ul>
 <p>시군구를 고르면 '지역별 인사이트' 맨 위에 결론을 먼저 씁니다: 고른 관점의 점수로 전국 시군구 중 상위 10% 이내면 '우선 검토', 30% 이내면 '검토', 그 밖은 '후순위'입니다. 정책 또는 사업 점수가 0.7(상위 30% 안팎) 이상이면 할 일 한 줄(예: 공유 PM이 없는 교통 공백 지역 → 지자체에 PM 연계 시범사업 제안 근거)을 덧붙이고, 그 아래에 기본 현황(대중교통 도보권 밖 면적, PM 기기, 공유자전거, PM 주차구역, 공유 PM 운영, 빔 운영)을 둡니다. 가중치는 모두 같고, 순위 비교용이지 절대 평가가 아닙니다. 자료 기준일이 서로 다르고(기기 수·주차구역은 지역마다 다름), 사고 합성데이터는 점수에 넣지 않았습니다.</p>
+
+<h2>서울 견인 (탭)</h2>
+<ul>
+  <li><b>자료</b>: 서울시 PM 신고 시스템의 신고 목록 내보내기(빔모빌리티 기기 대상, 2021-07-01부터). 반기별 파일을 합치고 같은 기록은 한 번만 셉니다(scripts/seoul_tow_csv.py → scripts/static/seoul_tow.csv). 다른 운영사 기기 신고는 없습니다.</li>
+  <li><b>처리 결과</b>: 상태값 그대로 — 견인완료(견인업체·구청), 수거완료(운영사가 직접 옮기거나 수거), 처리시간 경과(24시간 안에 조치 없음, 자동 종결), 기기미발견, 신고(미처리).</li>
+  <li><b>소요시간</b>: 신고 일시부터 조치일까지. 처리시간 경과 건은 뺍니다. 며칠씩 걸린 소수 기록이 평균을 크게 끌어올리므로 기본은 중앙값이고, 평균은 24시간 넘는 건을 빼고 냅니다.</li>
+  <li><b>위치</b>: 신고 위치를 약 200 m 칸으로 묶어 보여 줍니다. 신고 사진·기기 번호·주소·처리 메모는 쓰지 않습니다.</li>
+</ul>
 
 <h2>한계</h2>
 <ul>

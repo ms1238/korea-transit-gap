@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>서울 PM 견인 · PM 대동여지도</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="tow">
+<header>
+  <nav class="tabs"><a href="index.html#all">종합<small>어디부터 봐야 하나?</small></a><a href="index.html#pm">공백·PM 연계·공급<small>어디가 비었고, PM이 메울 수 있나?</small></a><a href="index.html#policy">제도·규제<small>무엇이 PM을 막고 있나?</small></a><a href="accidents.html">안전 (합성데이터)<small>사고는 어떤 경향인가?</small></a><a href="tow.html" class="on" aria-current="page">서울 견인<small>신고는 어떻게 처리됐나?</small></a><a href="about.html">자료·방법<small>어떻게 계산했나?</small></a><a href="en.html">English<small>Tables for HQ</small></a></nav>
+  <h1>서울 PM 견인 신고 처리 현황</h1>
+  <p class="sub" id="asof"></p>
+</header>
+
+<section class="callout">
+  서울시 PM 신고 시스템에서 받은 <b>빔모빌리티 기기 대상 신고 내역</b>입니다. 다른 운영사 기기에 대한 신고는 들어 있지 않습니다. 소요시간은 <b>신고 일시부터 조치일까지</b>이며, '처리시간 경과'는 24시간 안에 아무도 조치하지 않아 자동으로 닫힌 신고입니다.
+</section>
+
+<section class="controls tow-range">
+  <div class="selects">
+    <label>시작 <input type="date" id="from"></label>
+    <label>끝 <input type="date" id="to"></label>
+    <label>단위 <select id="unit"><option value="d">일</option><option value="w">주</option><option value="m" selected>월</option></select></label>
+    <label>구 <select id="gu"><option value="">서울 전체</option></select></label>
+    <label>구역 <select id="kind"><option value="">전체</option><option value="1">즉시 견인 구역</option><option value="0">일반 구역</option></select></label>
+  </div>
+  <div class="quick" id="quick"></div>
+</section>
+
+<section class="timeline">
+  <div class="tl-bar">
+    <div class="pills" role="radiogroup" aria-label="타임라인">
+      <button type="button" data-tl="off" class="on" role="radio" aria-checked="true">끄기</button>
+      <button type="button" data-tl="one" role="radio" aria-checked="false">그 시점만</button>
+      <button type="button" data-tl="cum" role="radio" aria-checked="false">시작부터 누적</button>
+    </div>
+    <button type="button" id="play" class="play" disabled>▶ 재생</button>
+    <input type="range" id="cursor" min="0" max="0" value="0" disabled aria-label="시점">
+    <b id="tl-label">타임라인 꺼짐</b>
+  </div>
+  <h3 id="main-title">신고 건수와 처리 결과</h3>
+  <div class="legend-inline" id="main-legend"></div>
+  <div id="c-main" class="svgchart"></div>
+  <div id="c-brush" class="svgchart brush" title="끌어서 기간을 고르고, 양 끝을 끌어 시작·끝을 바꿉니다"></div>
+  <p class="note">막대에 커서를 올리면 그 시점의 건수가 나옵니다. 아래 띠에서 끌어 기간을 고르거나 양 끝 손잡이로 시작·끝을 바꿀 수 있습니다. 타임라인을 켜면 지도와 숫자가 슬라이더의 시점(또는 시작부터 그 시점까지)으로 바뀝니다.</p>
+</section>
+
+<section class="kpis" id="kpis"></section>
+
+<section class="mapwrap">
+  <div id="map"></div>
+  <div class="map-opts">
+    <label>지도 <select id="metric"><option value="n">신고 건수</option><option value="t">견인 비율</option></select></label>
+  </div>
+  <div class="legend" id="legend"></div>
+</section>
+
+<section class="charts">
+  <div class="chart wide">
+    <h3>신고 → 조치 소요시간 <select id="stat" aria-label="통계"><option value="med">중앙값</option><option value="avg">평균 (24시간 넘는 건 제외)</option></select></h3>
+    <div class="legend-inline" id="dur-legend"></div>
+    <div id="c-dur" class="svgchart"></div>
+    <p class="note">세로축은 로그 눈금입니다 (분 단위 견인과 시간 단위 수거를 한 그림에 담기 위해).</p><p class="note" id="dur-note"></p>
+  </div>
+  <div class="chart"><h3>소요시간 분포 <small id="hist-sub"></small></h3><div class="legend-inline" id="hist-legend"></div><div id="c-hist"></div></div>
+  <div class="chart"><h3>구역별 처리 결과</h3><div id="c-kind"></div><h3 style="margin-top:14px">견인 조치 주체</h3><div id="c-by"></div></div>
+  <div class="chart wide"><h3>신고 시각 (시간대별 건수)</h3><div id="c-hour" class="svgchart"></div></div>
+</section>
+
+<section>
+  <div class="head"><h2 id="tbl-title">구별</h2><button id="csv">CSV</button></div>
+  <p class="note">위에서 고른 기간(타임라인을 켰으면 그 시점) 기준입니다. 행을 누르면 그 구만 봅니다. 소요시간은 중앙값입니다.</p>
+  <div class="tablewrap"><table id="table"></table></div>
+</section>
+
+<footer>
+  <p>자료: 서울시 PM 신고 시스템 신고 목록 (빔모빌리티 기기 대상, 2021년 7월부터). 위치는 약 200 m 칸으로 묶어 보여 주며, 신고 사진·기기 번호·주소는 쓰지 않습니다. 지도 © OpenStreetMap 기여자, OpenFreeMap.</p>
+</footer>
+<div class="tip" id="tip" hidden></div>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="tow.js"></script>
+</body>
+</html>
