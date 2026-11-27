@@ -10,7 +10,7 @@ photo:
     k     즉시/일반 (I / G)              m   신고 → 조치일 (분, 소수 1자리; 조치일이 없으면 비움)
     by    조치 주체: B 운영사, W 견인업체, G 구청, (비움) 없음
     co    조치업체 이름 (견인업체·구청일 때만; 운영사는 비움)
-    lat, lon  신고 위치, 소수 5자리 (약 1 m)로 반올림 (주차구역 후보를 건물 밖에 두는 데 씀)
+    lat, lon  신고 위치, 소수 5자리 (약 1 m)로 반올림 (주차구역 후보 위치에 씀)
 
 Run when new exports arrive:
     python scripts/seoul_tow_csv.py <folder with reportList_*.xlsx>
