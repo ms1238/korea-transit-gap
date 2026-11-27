@@ -457,14 +457,13 @@ function renderCand() {
   const by = { A: 0, B: 0, C: 0 }; rows.forEach(x => by[x.t]++);
   const note = $('cand-note'); note.hidden = !on;
   note.innerHTML = on ? `<b>주차구역 후보 ${fmt(rows.length)}곳</b> (A ${fmt(by.A)} · B ${fmt(by.B)} · C ${fmt(by.C)}). 견인 ${m.min_cell}건 이상인 1km 격자마다, 반경 ${m.r}m 안 견인이 많은 지점을 ${m.spacing}m 이상 떨어지게 1km²당 최대 ${$('cand-q').value}곳까지 골랐습니다(반경 안 견인 ${m.min}건 이상). ` +
-    (m.buildings ? `OpenStreetMap 건물 ${fmt(m.buildings)}동 안(가장자리 2m 포함)에 찍힌 견인 지점 ${fmt(m.in_building)}곳은 후보에서 뺐습니다. ` : '<b>건물 자료가 아직 없어 건물 안 지점을 거르지 못했습니다.</b> ') +
     (m.zones ? `사용 중인 서울 PM 주차구역 ${fmt(m.zones)}곳에서 ${m.zone_m}m 안에 있는 지점도 후보에서 뺐습니다(파란 원). ` : '') + `위 기간 선택과 관계없이 전체 기간 견인으로 고른 것이고, 신고 위치(GPS) 기준이라 설치 전 현장 확인이 필요합니다.` : '';
   if (mapReady) renderSel();
 }
 function downloadCand() {
   const rows = candRows(), m = T.meta.cand;
-  const head = ['순위', '등급', '위도', '경도', '구', `반경${m.r}m_견인_전체`, `반경${m.r}m_견인_${m.recent.slice(0, 7)}이후`, '1km격자내순위', '건물판정', `기존주차구역_${m.zone_m}m_제외`];
-  const body = rows.map(x => [x.rank, x.t, x.lat.toFixed(5), x.lon.toFixed(5), x.gu, x.n, x.r, x.cr, m.buildings ? '건물 밖' : '미판정', m.zones ? '적용' : '미적용'].join(','));
+  const head = ['순위', '등급', '위도', '경도', '구', `반경${m.r}m_견인_전체`, `반경${m.r}m_견인_${m.recent.slice(0, 7)}이후`, '1km격자내순위', `기존주차구역_${m.zone_m}m_제외`];
+  const body = rows.map(x => [x.rank, x.t, x.lat.toFixed(5), x.lon.toFixed(5), x.gu, x.n, x.r, x.cr, m.zones ? '적용' : '미적용'].join(','));
   const blob = new Blob(['\ufeff' + [head.join(','), ...body].join('\n')], { type: 'text/csv' });
   const l = document.createElement('a'); l.href = URL.createObjectURL(blob);
   l.download = `seoul_pm_parking_candidates_${$('cand-q').value}per_km2${$('cand-rec').checked ? '_recent' : ''}.csv`; document.body.appendChild(l); l.click(); l.remove();
