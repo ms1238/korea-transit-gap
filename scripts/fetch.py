@@ -19,6 +19,9 @@
 - pm_parking:   PM 주차구역 points (경기도 openapi, needs GYEONGGI; 천안, 김해, 부산 해운대·부산진 odcloud tables)
 - terrain:      elevation (Mapzen Terrain Tiles on AWS Open Data, terrarium PNG, zoom TERRAIN_Z ≈ 60 m; mostly SRTM in
                 Korea, a surface model that includes buildings), one Web Mercator mosaic in terrain.npz
+- seoul_buildings: OpenStreetMap building outlines around the 서울 PM 견인 records (scripts/static/seoul_tow.csv), one
+                file per BUILDING_TILE tile under raw/seoul_buildings/, so the 주차구역 후보 stay off buildings; continues
+                within its own Overpass budget and refreshes a tile after BUILDING_MAX_DAYS
 - landcover:    ESA WorldCover 2021 v200 (10 m land cover, CC BY 4.0, AWS Open Data), read from its overviews at
                 1/LANDCOVER_PER_DEG degree (≈ 70 m) into landcover.npz
 
@@ -75,11 +78,11 @@ AGE_DONG = "https://apis.data.go.kr/1741000/admmSexdAgePpltn/selectAdmmSexdAgePp
 LH_SPEC = "https://infuser.odcloud.kr/oas/docs?namespace=15080989/v1"  # 한국토지주택공사 전국 LH아파트 단지정보
 PM_ACCIDENTS = "15150556"  # 한국도로교통공단_개인형이동장치PM 교통사고 합성데이터 (odcloud namespace)
 SOURCES = ["admin_dong", "dong_pop", "age", "age_dong", "stops_molit", "stops_osm", "stations_osm", "lh", "pm_accidents", "pm_fleet", "pm_parking", "bike_road", "terrain", "landcover",
-           "routes", "stores", "trips"]
-OPTIONAL = {"age", "age_dong", "lh", "routes", "stores", "trips", "terrain", "landcover", "pm_accidents", "pm_fleet", "pm_parking", "bike_road"}  # the page is built without them (their figures stay empty)
+           "routes", "stores", "trips", "seoul_buildings"]
+OPTIONAL = {"seoul_buildings", "age", "age_dong", "lh", "routes", "stores", "trips", "terrain", "landcover", "pm_accidents", "pm_fleet", "pm_parking", "bike_road"}  # the page is built without them (their figures stay empty)
 FRESH_DAYS = {"admin_dong": 7, "dong_pop": 7, "stops_molit": 30, "stops_osm": 7, "stations_osm": 7, "lh": 30, "age": 7, "age_dong": 7,
               "terrain": 365, "landcover": 365, "pm_accidents": 7, "pm_fleet": 7, "pm_parking": 7, "bike_road": 30}  # refetch after this many days
-FILES = {"routes": "routes", "trips": "trips", "stores": "stores", "terrain": "terrain.npz", "landcover": "landcover.npz"}  # else <name>.json
+FILES = {"seoul_buildings": "seoul_buildings", "routes": "routes", "trips": "trips", "stores": "stores", "terrain": "terrain.npz", "landcover": "landcover.npz"}  # else <name>.json
 BBOX = (124.5, 33.0, 132.0, 38.7)  # lon0, lat0, lon1, lat1, as in build.py
 TERRAIN = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
 TERRAIN_Z = 11
@@ -276,6 +279,46 @@ def fetch_stops_molit(_key):
     if len(out) < 100000:
         raise RuntimeError(f"only {len(out)} stops")
     save_json("stops_molit.json", {"collected": day, "stops": out})
+
+
+BUILDING_TILE = (0.02, 0.025)  # lat × lon degrees, about 2.2 km × 2.2 km
+BUILDING_MAX_DAYS = 60
+BUILDING_QUERY = """[out:json][timeout:180];
+(way["building"]({s},{w},{n},{e});relation["building"]({s},{w},{n},{e}););
+out geom;"""
+
+
+def fetch_seoul_buildings(_key):
+    """OSM building outer rings per tile that holds a 견인 record: raw/seoul_buildings/<lat>_<lon>.json = [[[lon, lat], …], …]
+    (5 decimals). Tiles are fetched oldest first within OVERPASS_BUDGET_MIN of their own."""
+    path = os.path.join(os.path.dirname(__file__), "static", "seoul_tow.csv")
+    with open(path, encoding="utf-8") as f:
+        tiles = sorted({(int(float(r["lat"]) // BUILDING_TILE[0]), int(float(r["lon"]) // BUILDING_TILE[1]))
+                        for r in csv.DictReader(f) if r["lat"] and r["s"] == "T"})
+    folder = os.path.join(RAW, "seoul_buildings")
+    os.makedirs(folder, exist_ok=True)
+    fn = lambda t: os.path.join(folder, f"{t[0]}_{t[1]}.json")
+    age = lambda t: time.time() - os.path.getmtime(fn(t)) if os.path.exists(fn(t)) else float("inf")
+    todo = sorted((t for t in tiles if age(t) > BUILDING_MAX_DAYS * 86400), key=age, reverse=True)
+    _overpass_start.clear()  # a budget of its own, after the bus stops and stations
+    done = 0
+    for t in todo:
+        s_, w = t[0] * BUILDING_TILE[0], t[1] * BUILDING_TILE[1]
+        try:
+            els = overpass(BUILDING_QUERY.format(s=s_, w=w, n=s_ + BUILDING_TILE[0], e=w + BUILDING_TILE[1]))
+        except RuntimeError as e:
+            print(f"  buildings {t}: {e}", flush=True)
+            break
+        rings = []
+        for el in els:
+            if el["type"] == "way" and el.get("geometry"):
+                rings.append([[round(p["lon"], 5), round(p["lat"], 5)] for p in el["geometry"]])
+            elif el["type"] == "relation":
+                rings += [[[round(p["lon"], 5), round(p["lat"], 5)] for p in m["geometry"]]
+                          for m in el.get("members", []) if m.get("role") == "outer" and m.get("geometry")]
+        save_json(os.path.join("seoul_buildings", f"{t[0]}_{t[1]}.json"), rings)
+        done += 1
+    print(f"seoul_buildings: {len(tiles)} tiles, fetched {done} this run, {len(todo) - done} left", flush=True)
 
 
 def fetch_stops_osm(_key):
