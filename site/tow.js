@@ -51,6 +51,8 @@ async function main() {
   $('play').onclick = togglePlay;
   $('cursor').oninput = e => { st.cur = +e.target.value; stopPlay(); renderCursor(); };
   $('csv').onclick = downloadCsv;
+  for (const id of ['cand-on', 'cand-q', 'cand-rec']) $(id).onchange = renderCand;
+  $('cand-csv').onclick = downloadCand;
   legend($('main-legend'), STACK.map(s => [SCOL[s], S[s]]));
   legend($('dur-legend'), [[SCOL[0], '견인'], [SCOL[1], '운영사 수거·이동']]);
   legend($('hist-legend'), [[SCOL[0], '견인'], [SCOL[1], '운영사 수거·이동']]);
@@ -369,6 +371,18 @@ function initMap() {
     map.addLayer({ id: 'cells', type: 'circle', source: 'cells', paint: {
       'circle-radius': ['get', 'r'], 'circle-color': ['get', 'col'], 'circle-opacity': 0.8,
       'circle-stroke-color': '#fff', 'circle-stroke-width': 0.6 } });
+    map.addSource('cand', { type: 'geojson', data: candGeo() });
+    map.addLayer({ id: 'cand', type: 'circle', source: 'cand', layout: { visibility: 'none' }, paint: {
+      'circle-color': ['match', ['get', 't'], 'A', CTIER.A, 'B', CTIER.B, CTIER.C],
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, ['interpolate', ['linear'], ['get', 'n'], 3, 2.5, 400, 8], 15, ['interpolate', ['linear'], ['get', 'n'], 3, 5, 400, 15]],
+      'circle-stroke-color': ['case', ['>', ['get', 'r'], 0], '#0b0b0b', '#ffffff'], 'circle-stroke-width': ['case', ['>', ['get', 'r'], 0], 1.2, 1] } });
+    const cpop = new maplibregl.Popup({ closeButton: false, closeOnClick: false, maxWidth: '280px' });
+    map.on('mousemove', 'cand', e => {
+      const p = e.features[0].properties, [lo, la] = e.features[0].geometry.coordinates;
+      map.getCanvas().style.cursor = 'pointer';
+      cpop.setLngLat(e.lngLat).setHTML(`<div class="tt">주차구역 후보 #${p.rank} · ${p.t}등급</div>` + tipRows([[null, '구', esc(p.gu)], [null, `반경 ${T.meta.cand.r}m 견인 (전체)`, fmt(p.n)], [null, `그중 ${T.meta.cand.recent.slice(0, 7).replace('-', '.')} 이후`, fmt(p.r)], [null, '1km 격자 안 순위', p.cr + '위'], [null, '위도, 경도', `${la.toFixed(5)}, ${lo.toFixed(5)}`]]) + (p.z ? `<div class="tr"><span>기존 PM 주차구역 ${T.meta.cand.near_zone}m 안</span></div>` : '')).addTo(map);
+    });
+    map.on('mouseleave', 'cand', () => { map.getCanvas().style.cursor = ''; cpop.remove(); });
     const pop = new maplibregl.Popup({ closeButton: false, closeOnClick: false, maxWidth: '260px' });
     map.on('mousemove', 'cells', e => {
       const p = e.features[0].properties, c = JSON.parse(p.c);
@@ -378,6 +392,7 @@ function initMap() {
     map.on('mouseleave', 'cells', () => { map.getCanvas().style.cursor = ''; pop.remove(); });
     mapReady = true;
     renderSel();
+    renderCand();
   });
 }
 
@@ -400,7 +415,51 @@ function drawMap(idx) {
   $('legend').innerHTML = `<div class="t"><span>${tow ? '견인 비율 (칸별)' : '신고 건수 (칸별)'}</span></div>` +
     (tow ? `<div class="bar">${RAMP.map(c => `<i style="background:${c}"></i>`).join('')}</div><div class="bar-l"><span>0%</span><span>50%</span><span>100%</span></div><div class="row"><i class="pt" style="background:#c9c8c3"></i>신고 ${MIN}건 미만</div>`
       : `<div class="row"><i class="pt" style="background:#257de0"></i>원 크기 = 신고 건수 (가장 많은 칸 ${fmt(max)}건)</div>`) +
-    `<div class="row"><small>${fmt(agg.size)}칸 · 약 200 m 칸으로 묶음</small></div>`;
+    `<div class="row"><small>${fmt(agg.size)}칸 · 약 200 m 칸으로 묶음</small></div>` + candLegend();
+}
+
+// --- PM 주차구역 후보 (built from all 견인 in build.py; not filtered by the 기간 above) ---------------------------------
+const CTIER = { A: '#9c3417', B: '#f08a4f', C: '#fde3d0' };
+const ctier = n => n >= 10 ? 'A' : n >= 5 ? 'B' : 'C';
+function candRows() {
+  const c = T.cand, q = +$('cand-q').value, rec = $('cand-rec').checked;
+  const rows = c.n.map((n, i) => ({ i, lon: c.lon[i], lat: c.lat[i], n, r: c.r[i], cr: c.cr[i], gu: c.g[i] == null ? '' : T.gu[c.g[i]], z: c.z[i], t: ctier(n) }))
+    .filter(x => x.cr <= q && (!rec || x.r > 0)).sort((a, b) => b.n - a.n || b.r - a.r);
+  rows.forEach((x, k) => { x.rank = k + 1; });
+  return rows;
+}
+function candGeo() {
+  return { type: 'FeatureCollection', features: candRows().reverse().map(x => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [x.lon, x.lat] },
+    properties: { rank: x.rank, n: x.n, r: x.r, cr: x.cr, gu: x.gu, z: x.z, t: x.t } })) };
+}
+function candLegend() {
+  if (!$('cand-on').checked) return '';
+  return `<div class="t" style="margin-top:6px"><span>주차구역 후보 (반경 ${T.meta.cand.r}m 견인)</span></div>` +
+    [['A', '10건 이상'], ['B', '5~9건'], ['C', `${T.meta.cand.min}~4건`]].map(([t, l]) => `<div class="row"><i class="pt" style="background:${CTIER[t]}"></i>${t} ${l}</div>`).join('') +
+    `<div class="row"><i class="pt" style="background:#fff;outline:1.5px solid #0b0b0b"></i>검은 테두리: ${T.meta.cand.recent.slice(0, 7).replace('-', '.')} 이후 견인 있음</div>`;
+}
+function renderCand() {
+  if (!T.cand) { $('cand-on').closest('.cand-opts').hidden = true; return; }
+  const on = $('cand-on').checked, rows = candRows(), m = T.meta.cand;
+  if (mapReady) {
+    map.getSource('cand').setData(candGeo());
+    map.setLayoutProperty('cand', 'visibility', on ? 'visible' : 'none');
+    map.setPaintProperty('cells', 'circle-opacity', on ? 0.25 : 0.8);
+  }
+  const by = { A: 0, B: 0, C: 0 }; rows.forEach(x => by[x.t]++);
+  const note = $('cand-note'); note.hidden = !on;
+  note.innerHTML = on ? `<b>주차구역 후보 ${fmt(rows.length)}곳</b> (A ${fmt(by.A)} · B ${fmt(by.B)} · C ${fmt(by.C)}). 견인 ${m.min_cell}건 이상인 1km 격자마다, 반경 ${m.r}m 안 견인이 많은 지점을 ${m.spacing}m 이상 떨어지게 1km²당 최대 ${$('cand-q').value}곳까지 골랐습니다(반경 안 견인 ${m.min}건 이상). ` +
+    (m.buildings ? `OpenStreetMap 건물 ${fmt(m.buildings)}동 안(가장자리 2m 포함)에 찍힌 견인 지점 ${fmt(m.in_building)}곳은 후보에서 뺐습니다. ` : '<b>건물 자료가 아직 없어 건물 안 지점을 거르지 못했습니다.</b> ') +
+    `기존 서울 PM 주차구역 ${m.near_zone}m 안 후보는 ${fmt(rows.filter(x => x.z).length)}곳입니다. 위 기간 선택과 관계없이 전체 기간 견인으로 고른 것이고, 신고 위치(GPS) 기준이라 설치 전 현장 확인이 필요합니다.` : '';
+  if (mapReady) renderSel();
+}
+function downloadCand() {
+  const rows = candRows(), m = T.meta.cand;
+  const head = ['순위', '등급', '위도', '경도', '구', `반경${m.r}m_견인_전체`, `반경${m.r}m_견인_${m.recent.slice(0, 7)}이후`, '1km격자내순위', `기존PM주차구역_${m.near_zone}m안`, '건물판정'];
+  const body = rows.map(x => [x.rank, x.t, x.lat.toFixed(5), x.lon.toFixed(5), x.gu, x.n, x.r, x.cr, x.z ? 'Y' : '', m.buildings ? '건물 밖' : '미판정'].join(','));
+  const blob = new Blob(['\ufeff' + [head.join(','), ...body].join('\n')], { type: 'text/csv' });
+  const l = document.createElement('a'); l.href = URL.createObjectURL(blob);
+  l.download = `seoul_pm_parking_candidates_${$('cand-q').value}per_km2${$('cand-rec').checked ? '_recent' : ''}.csv`; document.body.appendChild(l); l.click(); l.remove();
 }
 
 // --- table ----------------------------------------------------------------------------------------------------------
@@ -464,7 +523,7 @@ function downloadCoCsv() {
   const q = v => v == null ? '' : typeof v === 'number' ? +v.toFixed(4) : `"${String(v).replace(/"/g, '""')}"`;
   const body = coRows.map(r => [r.co, r.t, r.sh, r.med, r.avg, r.f1, r.f5, r.im, r.nf, r.gu, r.span].map(q).join(','));
   const blob = new Blob(['\ufeff' + [head.join(','), ...body].join('\n')], { type: 'text/csv' });
-  const l = document.createElement('a'); l.href = URL.createObjectURL(blob); l.download = `서울견인_업체별_${iso(a)}_${iso(b)}.csv`; l.click();
+  const l = document.createElement('a'); l.href = URL.createObjectURL(blob); l.download = `서울견인_업체별_${iso(a)}_${iso(b)}.csv`; document.body.appendChild(l); l.click(); l.remove();
 }
 function downloadCsv() {
   const [a, b] = selRange();
@@ -472,7 +531,7 @@ function downloadCsv() {
   const q = v => v == null ? '' : typeof v === 'number' ? +v.toFixed(4) : `"${String(v).replace(/"/g, '""')}"`;
   const body = tableRows.map(r => [r.gu, r.n, r.t, r.tp, r.cp, r.ep, r.np, r.tm, r.cm].map(q).join(','));
   const blob = new Blob(['﻿' + [head.join(','), ...body].join('\n')], { type: 'text/csv' });
-  const l = document.createElement('a'); l.href = URL.createObjectURL(blob); l.download = `서울견인_구별_${iso(a)}_${iso(b)}.csv`; l.click();
+  const l = document.createElement('a'); l.href = URL.createObjectURL(blob); l.download = `서울견인_구별_${iso(a)}_${iso(b)}.csv`; document.body.appendChild(l); l.click(); l.remove();
 }
 
 // --- timeline ---------------------------------------------------------------------------------------------------------

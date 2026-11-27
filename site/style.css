@@ -242,3 +242,6 @@ body.tow .kpis { grid-template-columns: repeat(6, 1fr); }
 }
 .cell-bar { display: inline-block; width: 60px; height: 8px; background: #f1f0ec; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
 .cell-bar i { display: block; height: 8px; background: #f47230; border-radius: 2px; }
+.map-opts { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; max-width: calc(100% - 80px); }
+.cand-opts { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+.cand-opts select, .cand-opts button { font-size: 12px; }

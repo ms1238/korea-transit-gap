@@ -10,7 +10,7 @@ photo:
     k     즉시/일반 (I / G)              m   신고 → 조치일 (분, 소수 1자리; 조치일이 없으면 비움)
     by    조치 주체: B 운영사, W 견인업체, G 구청, (비움) 없음
     co    조치업체 이름 (견인업체·구청일 때만; 운영사는 비움)
-    lat, lon  신고 위치, 소수 3자리 (약 100 m)로 반올림
+    lat, lon  신고 위치, 소수 5자리 (약 1 m)로 반올림 (주차구역 후보를 건물 밖에 두는 데 씀)
 
 Run when new exports arrive:
     python scripts/seoul_tow_csv.py <folder with reportList_*.xlsx>
@@ -47,8 +47,8 @@ def main(folder):
         "s": d["상태"].map(STATUS), "k": d["즉시/일반"].map({"즉시": "I", "일반": "G"}).fillna(""),
         "m": ((t1 - t0).dt.total_seconds() / 60).round(1), "by": by,
         "co": d["조치업체"].fillna("").where(by.isin(["W", "G"]), ""),
-        "lat": pd.to_numeric(d["신고시점 위도"], errors="coerce").round(3),
-        "lon": pd.to_numeric(d["신고시점 경도"], errors="coerce").round(3),
+        "lat": pd.to_numeric(d["신고시점 위도"], errors="coerce").round(5),
+        "lon": pd.to_numeric(d["신고시점 경도"], errors="coerce").round(5),
     }).sort_values(["d", "h"], kind="stable")
     out.to_csv(OUT, index=False)
     print(f"{len(files)} files, {n0} rows, {len(out)} after de-duplication, {out.d.min()} – {out.d.max()} → {OUT}")

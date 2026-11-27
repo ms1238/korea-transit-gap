@@ -54,9 +54,15 @@
   <div id="map"></div>
   <div class="map-opts">
     <label>지도 <select id="metric"><option value="n">신고 건수</option><option value="t">견인 비율</option></select></label>
+    <span class="cand-opts"><label class="chk"><input type="checkbox" id="cand-on"> 주차구역 후보</label>
+      <select id="cand-q" aria-label="밀도 기준"><option value="20">1km²당 20곳</option><option value="30">1km²당 30곳</option></select>
+      <label class="chk"><input type="checkbox" id="cand-rec"> 최근 견인 있는 곳만</label>
+      <button type="button" id="cand-csv">후보 목록 CSV (위경도)</button></span>
   </div>
   <div class="legend" id="legend"></div>
 </section>
+
+<p class="note" id="cand-note" hidden></p>
 
 <section class="charts">
   <div class="chart wide">

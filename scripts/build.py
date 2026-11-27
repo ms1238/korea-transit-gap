@@ -899,6 +899,54 @@ def write_beam(dongs, geoms):
 
 
 TOW_CELL = 0.002  # 서울 견인 map cells (degrees, about 180 m × 220 m)
+# PM 주차구역 후보 from the 견인 points: per 1 km square with CAND_MIN_CELL+ 견인, the points with the most 견인 within
+# CAND_R m, at least CAND_SPACING m apart, at least CAND_MIN 견인 each, up to CAND_MAX per km² (the page shows 20 or 30),
+# never inside an OSM building (raw/seoul_buildings, CAND_BUILDING_M margin); CAND_NEAR_ZONE flags an existing zone close by
+CAND_R, CAND_SPACING, CAND_MIN, CAND_MAX, CAND_MIN_CELL, CAND_BUILDING_M, CAND_NEAR_ZONE = 50, 100, 3, 30, 30, 2, 30
+CAND_RECENT = "2024-12-01"  # 서울 전면 즉시견인 from here
+
+
+def tow_candidates(recs):
+    """[(lon, lat, n, recent, cell rank, record index)] and the count of 견인 points left out for lying in a building."""
+    import datetime as dt
+    lat0 = 37.55
+    kx, ky = 111320 * math.cos(math.radians(lat0)), 110940
+    pts = [(i, float(r["lon"]), float(r["lat"]), r["d"] >= CAND_RECENT) for i, r in enumerate(recs) if r["s"] == "T" and r["lat"] and r["lon"]]
+    lon = np.array([p[1] for p in pts]); lat = np.array([p[2] for p in pts]); rec = np.array([p[3] for p in pts])
+    x, y = (lon - 127) * kx, (lat - lat0) * ky
+    tree = cKDTree(np.c_[x, y])
+    near = tree.query_ball_point(np.c_[x, y], CAND_R)
+    n = np.array([len(v) for v in near]); nr = np.array([rec[v].sum() for v in near])
+    inside = np.zeros(len(pts), bool)
+    folder = os.path.join(RAW, "seoul_buildings")
+    rings = []
+    for f in glob.glob(os.path.join(folder, "*.json")):
+        with open(f, encoding="utf-8") as fh:
+            rings += [r for r in json.load(fh) if len(r) >= 4]
+    if rings:
+        polys = [shapely.Polygon(r) for r in rings]
+        polys = [p if p.is_valid else p.buffer(0) for p in polys]
+        btree = shapely.STRtree(polys)
+        m = CAND_BUILDING_M / ky
+        hit = btree.query(shapely.points(lon, lat), predicate="dwithin", distance=m)
+        inside[np.unique(hit[0])] = True
+    cell = (np.floor(x / 1000).astype(int), np.floor(y / 1000).astype(int))
+    by = defaultdict(list)
+    for k in range(len(pts)):
+        by[(cell[0][k], cell[1][k])].append(k)
+    out = []
+    for ks in by.values():
+        if len(ks) < CAND_MIN_CELL:
+            continue
+        chosen = []
+        for k in sorted(ks, key=lambda k: (-n[k], -nr[k])):
+            if n[k] < CAND_MIN or len(chosen) >= CAND_MAX:
+                break
+            if inside[k] or any((x[k] - x[j]) ** 2 + (y[k] - y[j]) ** 2 < CAND_SPACING ** 2 for j in chosen):
+                continue
+            chosen.append(k)
+        out += [(lon[k], lat[k], int(n[k]), int(nr[k]), r + 1, pts[k][0]) for r, k in enumerate(chosen)]
+    return out, int(inside.sum()), len(rings)
 
 
 def write_seoul_tow(dongs=None, geoms=None):
@@ -938,10 +986,24 @@ def write_seoul_tow(dongs=None, geoms=None):
                 cells.append([round(key[0] * TOW_CELL, 4), round(key[1] * TOW_CELL, 4)])
             c = ci[key]
         cols["c"].append(c)
+    cands, in_bldg, n_bldg = tow_candidates(recs)
+    zones = []
+    zpath = os.path.join(os.path.dirname(__file__), "static", "pm_parking_static.csv")
+    if os.path.exists(zpath):
+        with open(zpath, encoding="utf-8") as f:
+            zones = [(float(r["경도"]), float(r["위도"])) for r in csv.DictReader(f) if r["지역"].startswith("서울") and r["경도"]]
+    zt = cKDTree(np.array([((lo - 127) * 88200, (la - 37.55) * 110940) for lo, la in zones])) if zones else None
+    cand = {k: [] for k in ("lon", "lat", "n", "r", "cr", "g", "z")}
+    for lo, la, n_, nr, cr, i in cands:
+        cand["lon"].append(round(float(lo), 5)); cand["lat"].append(round(float(la), 5))
+        cand["n"].append(n_); cand["r"].append(nr); cand["cr"].append(cr); cand["g"].append(gi.get(recs[i]["gu"]))
+        cand["z"].append(int(zt is not None and zt.query(((lo - 127) * 88200, (la - 37.55) * 110940))[0] <= CAND_NEAR_ZONE))
     out = {"meta": {"start": start.isoformat(), "end": recs[-1]["d"], "n": len(recs), "cell": TOW_CELL,
+                    "cand": {"r": CAND_R, "spacing": CAND_SPACING, "min": CAND_MIN, "max": CAND_MAX, "min_cell": CAND_MIN_CELL,
+                             "recent": CAND_RECENT, "buildings": n_bldg, "in_building": in_bldg, "zones": len(zones), "near_zone": CAND_NEAR_ZONE},
                     "status": ["견인", "운영사 수거·이동", "처리시간 경과", "기기 미발견", "미처리"],
                     "by": ["없음", "운영사", "견인업체", "구청"]},
-           "gu": gu, "co": co, "cells": cells, "cols": cols}
+           "gu": gu, "co": co, "cells": cells, "cand": cand, "cols": cols}
     if dongs is not None:
         parts = defaultdict(list)
         for d, g in zip(dongs, geoms):
@@ -955,7 +1017,8 @@ def write_seoul_tow(dongs=None, geoms=None):
     with open(os.path.join(OUT, "seoul_tow.json"), "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
     print(f"서울 견인: {len(recs)} 신고 {start} – {recs[-1]['d']}, {len(cells)} cells, "
-          f"{len(out.get('bounds', {}).get('features', []))} 구 outlines", flush=True)
+          f"{len(out.get('bounds', {}).get('features', []))} 구 outlines; 주차구역 후보 {len(cands)} "
+          f"({n_bldg} buildings, {in_bldg} 견인 points in a building left out, {sum(cand['z'])} near an existing zone)", flush=True)
 
 
 def main():
